@@ -1,0 +1,366 @@
+// server/server.js
+require("dotenv").config();
+
+const express = require("express");
+const cors = require("cors");
+const path = require("path");
+const fs = require("fs");
+
+const sqlite3 = require("sqlite3").verbose();
+
+let OpenAI = null;
+try { OpenAI = require("openai"); } catch {}
+
+const app = express();
+app.use(cors({ origin: ["http://localhost:3000"] }));
+app.use(express.json({ limit: "5mb" }));
+
+// Health
+app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// ===============================
+// SQLite setup
+// ===============================
+const DATA_DIR = path.join(__dirname, "data");
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const DB_PATH = path.join(DATA_DIR, "summaries.db");
+const db = new sqlite3.Database(DB_PATH, (err) => {
+  if (err) {
+    console.error("❌ Error abriendo SQLite:", err);
+    process.exit(1);
+  }
+  console.log("✅ Base de datos SQLite inicializada");
+});
+
+function run(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) {
+      if (err) reject(err);
+      else resolve(this);
+    });
+  });
+}
+function get(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) reject(err);
+      else resolve(row);
+    });
+  });
+}
+function all(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows);
+    });
+  });
+}
+
+async function initDb() {
+  await run(`
+    CREATE TABLE IF NOT EXISTS summaries (
+      interviewId TEXT PRIMARY KEY,
+      summary TEXT NOT NULL,
+      rawConversation TEXT,
+      createdAt TEXT NOT NULL
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS groups (
+      groupId TEXT PRIMARY KEY,
+      restaurantName TEXT,
+      interviewIds TEXT NOT NULL,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS group_summaries (
+      groupId TEXT PRIMARY KEY,
+      summary TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    )
+  `);
+
+  console.log("✅ Tabla verificada");
+}
+
+const GROUP_SYSTEM_PROMPT = `
+Eres un consultor senior de research cualitativo (CX/UX/Market Research) especializado en hostelería/restauración.
+
+Vas a recibir VARIOS informes individuales (ya resumidos) de entrevistas del mismo restaurante/grupo.
+Tu tarea es crear UN ÚNICO INFORME GLOBAL, más profesional y visual, siguiendo una estructura muy similar a la de los informes individuales.
+
+Reglas:
+- Responde en ESPAÑOL.
+- No inventes datos. Solo sintetiza lo que aparece en los informes individuales.
+- Debes detectar patrones repetidos, tensiones, contradicciones, y prioridades.
+- Mantén formato muy visual, con emojis, títulos claros, y bullets que NO sean demasiado cortos (aporta contexto).
+- NO escribas un texto largo sin estructura.
+`.trim();
+
+function buildGroupPrompt(group, blocks) {
+  const restaurantLabel = group.restaurantName
+    ? `Restaurante: ${group.restaurantName}`
+    : `Grupo: ${group.groupId}`;
+
+  return `
+${restaurantLabel}
+ID grupo: ${group.groupId}
+Nº entrevistas en el grupo: ${group.interviewIds.length}
+Nº entrevistas con informe disponible: ${blocks.length}
+
+INFORMES INDIVIDUALES:
+${blocks
+  .map((b, i) => `--- ENTREVISTA ${i + 1} (${b.id}) ---\n${b.summary}`)
+  .join("\n\n")}
+
+FORMATO:
+📌 0) Resumen ejecutivo (1 frase)
+
+📌 1) Insights clave (6-10 bullets)
+- Emoji + **titular** + 1-2 frases con contexto
+
+💬 2) Evidencias / citas (5-8)
+- ➤ “cita” — (entrevista <id>)
+
+🎯 3) Recomendaciones (6-10)
+- ⬜️ Acción + impacto
+
+🎨 4) Persona global
+- Nombre ficticio, objetivos, frustraciones
+
+⚠️ 5) Riesgos (si aplica)
+`.trim();
+}
+
+// ===============================
+// ENDPOINTS: summaries individuales
+// ===============================
+app.post("/api/save-summary", async (req, res) => {
+  try {
+    const { interviewId, summary, rawConversation } = req.body || {};
+    if (!interviewId || !summary) {
+      return res.status(400).json({ error: "Faltan interviewId o summary" });
+    }
+
+    const now = new Date().toISOString();
+
+    await run(
+      `
+      INSERT INTO summaries (interviewId, summary, rawConversation, createdAt)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(interviewId) DO UPDATE SET
+        summary=excluded.summary,
+        rawConversation=excluded.rawConversation,
+        createdAt=excluded.createdAt
+      `,
+      [String(interviewId), String(summary), rawConversation ? String(rawConversation) : null, now]
+    );
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("❌ save-summary:", e);
+    res.status(500).json({ error: "Error guardando summary" });
+  }
+});
+
+app.get("/api/summary/:token", async (req, res) => {
+  try {
+    const token = String(req.params.token);
+    const row = await get(`SELECT * FROM summaries WHERE interviewId = ?`, [token]);
+
+    if (!row) return res.status(404).send("No existe summary para este token.");
+    res.json(row);
+  } catch (e) {
+    console.error("❌ get summary:", e);
+    res.status(500).send("Error leyendo summary.");
+  }
+});
+
+app.get("/api/summaries", async (_req, res) => {
+  try {
+    const rows = await all(`SELECT * FROM summaries ORDER BY createdAt DESC LIMIT 500`);
+    res.json(rows);
+  } catch (e) {
+    console.error("❌ list summaries:", e);
+    res.status(500).json([]);
+  }
+});
+
+// ===============================
+// ENDPOINTS: grupos
+// ===============================
+app.post("/api/save-group", async (req, res) => {
+  try {
+    const { groupId, restaurantName, interviewIds } = req.body || {};
+    if (!groupId || !Array.isArray(interviewIds) || interviewIds.length === 0) {
+      return res.status(400).json({ error: "Faltan groupId o interviewIds" });
+    }
+
+    const gid = String(groupId);
+    const now = new Date().toISOString();
+
+    const existing = await get(`SELECT * FROM groups WHERE groupId = ?`, [gid]);
+    const existingIds = existing?.interviewIds ? JSON.parse(existing.interviewIds) : [];
+    const merged = Array.from(new Set([...(existingIds || []), ...interviewIds.map(String)]));
+
+    await run(
+      `
+      INSERT INTO groups (groupId, restaurantName, interviewIds, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(groupId) DO UPDATE SET
+        restaurantName=excluded.restaurantName,
+        interviewIds=excluded.interviewIds,
+        updatedAt=excluded.updatedAt
+      `,
+      [
+        gid,
+        restaurantName ? String(restaurantName) : existing?.restaurantName || null,
+        JSON.stringify(merged),
+        existing?.createdAt || now,
+        now,
+      ]
+    );
+
+    const saved = await get(`SELECT * FROM groups WHERE groupId = ?`, [gid]);
+    res.json({
+      ok: true,
+      group: {
+        groupId: saved.groupId,
+        restaurantName: saved.restaurantName || undefined,
+        interviewIds: JSON.parse(saved.interviewIds),
+        createdAt: saved.createdAt,
+        updatedAt: saved.updatedAt,
+      },
+    });
+  } catch (e) {
+    console.error("❌ save-group:", e);
+    res.status(500).json({ error: "Error guardando grupo" });
+  }
+});
+
+app.get("/api/group/:groupId", async (req, res) => {
+  try {
+    const gid = String(req.params.groupId);
+    const g = await get(`SELECT * FROM groups WHERE groupId = ?`, [gid]);
+    if (!g) return res.status(404).json({ error: "Grupo no encontrado" });
+
+    res.json({
+      groupId: g.groupId,
+      restaurantName: g.restaurantName || undefined,
+      interviewIds: JSON.parse(g.interviewIds),
+      createdAt: g.createdAt,
+      updatedAt: g.updatedAt,
+    });
+  } catch (e) {
+    console.error("❌ get-group:", e);
+    res.status(500).json({ error: "Error leyendo grupo" });
+  }
+});
+
+app.get("/api/groups", async (_req, res) => {
+  try {
+    const rows = await all(`SELECT * FROM groups ORDER BY updatedAt DESC LIMIT 500`);
+    res.json(
+      rows.map((g) => ({
+        groupId: g.groupId,
+        restaurantName: g.restaurantName || undefined,
+        interviewIds: JSON.parse(g.interviewIds),
+        createdAt: g.createdAt,
+        updatedAt: g.updatedAt,
+      }))
+    );
+  } catch (e) {
+    console.error("❌ list-groups:", e);
+    res.status(500).json([]);
+  }
+});
+
+// ===============================
+// ENDPOINT: informe global de grupo (cache + refresh)
+// ===============================
+app.get("/api/group-summary/:groupId", async (req, res) => {
+  try {
+    const gid = String(req.params.groupId);
+    const refresh = String(req.query.refresh || "") === "1";
+
+    const g = await get(`SELECT * FROM groups WHERE groupId = ?`, [gid]);
+    if (!g) return res.status(404).json({ error: "Grupo no encontrado" });
+
+    const group = {
+      groupId: g.groupId,
+      restaurantName: g.restaurantName || undefined,
+      interviewIds: JSON.parse(g.interviewIds),
+    };
+
+    if (!refresh) {
+      const cached = await get(`SELECT * FROM group_summaries WHERE groupId = ?`, [gid]);
+      if (cached?.summary?.trim()) return res.json(cached);
+    }
+
+    // leer summaries individuales
+    const blocks = [];
+    for (const id of group.interviewIds) {
+      const row = await get(`SELECT summary FROM summaries WHERE interviewId = ?`, [String(id)]);
+      if (row?.summary?.trim()) blocks.push({ id: String(id), summary: String(row.summary).trim() });
+    }
+
+    if (blocks.length === 0) {
+      return res.status(400).json({ error: "No hay summaries individuales todavía para este grupo." });
+    }
+
+    if (!OpenAI) return res.status(500).json({ error: "Falta paquete openai (npm i openai)" });
+    if (!process.env.OPENAI_API_KEY) return res.status(500).json({ error: "Falta OPENAI_API_KEY en .env" });
+
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        { role: "system", content: GROUP_SYSTEM_PROMPT },
+        { role: "user", content: buildGroupPrompt(group, blocks) },
+      ],
+      temperature: 0.4,
+    });
+
+    const text = completion?.choices?.[0]?.message?.content?.trim() || "";
+    if (!text) return res.status(500).json({ error: "OpenAI devolvió respuesta vacía" });
+
+    const now = new Date().toISOString();
+    await run(
+      `
+      INSERT INTO group_summaries (groupId, summary, createdAt)
+      VALUES (?, ?, ?)
+      ON CONFLICT(groupId) DO UPDATE SET
+        summary=excluded.summary,
+        createdAt=excluded.createdAt
+      `,
+      [gid, text, now]
+    );
+
+    const saved = await get(`SELECT * FROM group_summaries WHERE groupId = ?`, [gid]);
+    res.json(saved);
+  } catch (e) {
+    console.error("❌ group-summary:", e);
+    res.status(500).json({ error: "Error generando informe global" });
+  }
+});
+
+// ===============================
+const PORT = process.env.PORT || 3001;
+
+initDb()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`🚀 Server de resúmenes escuchando en http://localhost:${PORT}`);
+    });
+  })
+  .catch((e) => {
+    console.error("❌ Error initDb:", e);
+    process.exit(1);
+  });
