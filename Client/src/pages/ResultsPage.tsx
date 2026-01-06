@@ -1,6 +1,8 @@
 // src/pages/ResultsPage.tsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+
+const API_BASE = (process.env.REACT_APP_API_BASE_URL || "http://localhost:3001").trim();
 
 type SummaryResponse = {
   interviewId: string;
@@ -13,76 +15,134 @@ type IndividualSummaryCache = {
   interviewId: string;
   summary: string;
   createdAt?: string;
+  rawConversation?: string;
 };
+
+function safeJsonParse<T = any>(text: string): T | null {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
 
 const ResultsPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
+
+  const requestUrl = useMemo(() => {
+    if (!token) return "";
+    return `${API_BASE}/api/summary/${encodeURIComponent(token)}`;
+  }, [token]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SummaryResponse | null>(null);
 
+  // 👇 Debug visible para ver si el build usa un API_BASE raro (muy común)
+  const [debug, setDebug] = useState("");
+
   useEffect(() => {
-    if (!token) {
-      setError("Falta el identificador de entrevista en la URL.");
-      setLoading(false);
-      return;
-    }
+    let cancelled = false;
 
-    const fetchSummary = async () => {
+    const run = async () => {
+      if (!token) {
+        setError("Falta el identificador de entrevista en la URL.");
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+      setData(null);
+
+      setDebug(
+        `API_BASE="${API_BASE}" | request="${requestUrl}" | origin="${window.location.origin}"`
+      );
+
+      // 1) Intento BACKEND
       try {
-        setLoading(true);
-        setError(null);
+        const res = await fetch(requestUrl, {
+          method: "GET",
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+          },
+        });
 
-        const res = await fetch(
-          `http://localhost:3001/api/summary/${encodeURIComponent(token)}`
-        );
+        const text = await res.text().catch(() => "");
+        const parsed = safeJsonParse<SummaryResponse | SummaryResponse[] | { error?: string }>(text);
 
         if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          throw new Error(text || `No se ha encontrado ningún resumen para la entrevista.`);
+          const msg =
+            (parsed as any)?.error ||
+            text ||
+            `No se ha encontrado ningún resumen (HTTP ${res.status}).`;
+          throw new Error(msg);
         }
 
-        const json: SummaryResponse | SummaryResponse[] = await res.json();
-        const entry = Array.isArray(json) ? json[0] : json;
+        const entry = Array.isArray(parsed) ? (parsed[0] as SummaryResponse) : (parsed as SummaryResponse);
 
         if (!entry || !entry.summary) {
-          throw new Error("No hay resumen guardado para esta entrevista.");
+          throw new Error("El backend respondió, pero no hay 'summary' en la respuesta.");
         }
 
-        setData(entry);
-                // cache local para usos futuros (por ejemplo, agregación o fallback)
-                try {
-                localStorage.setItem(
-                    `interview-summary-${token}`,
-                    JSON.stringify({
-                    interviewId: token,
-                    summary: entry.summary,
-                    createdAt: entry.createdAt,
-                    })
-                );
-                } catch {}
+        if (cancelled) return;
 
-        // ✅ CACHE LOCAL: para poder generar informes globales aunque falle el backend luego
-        const cache: IndividualSummaryCache = {
-          interviewId: token,
-          summary: entry.summary,
-          createdAt: entry.createdAt,
-        };
-        localStorage.setItem(`interview-summary-${token}`, JSON.stringify(cache));
+        setData(entry);
+
+        // ✅ Cache local (una sola vez)
+        try {
+          const cache: IndividualSummaryCache = {
+            interviewId: token,
+            summary: entry.summary,
+            createdAt: entry.createdAt,
+            rawConversation: entry.rawConversation,
+          };
+          localStorage.setItem(`interview-summary-${token}`, JSON.stringify(cache));
+        } catch {}
+
+        setLoading(false);
+        return;
       } catch (e: any) {
+        // 2) Fallback: localStorage (si existiera)
+        try {
+          const raw = localStorage.getItem(`interview-summary-${token}`);
+          const cached = raw ? safeJsonParse<IndividualSummaryCache>(raw) : null;
+
+          if (cached?.summary) {
+            if (cancelled) return;
+
+            setData({
+              interviewId: cached.interviewId,
+              summary: cached.summary,
+              createdAt: cached.createdAt,
+              rawConversation: cached.rawConversation,
+            });
+
+            setError(
+              `⚠️ No pude cargar el resumen desde el backend. Mostrando copia local. Detalle: ${
+                e?.message || "Error"
+              }`
+            );
+            setLoading(false);
+            return;
+          }
+        } catch {}
+
+        if (cancelled) return;
+
         console.error("Error cargando resumen:", e);
-        setError(
-          e?.message ||
-            "Se ha producido un error al recuperar el resumen de la entrevista."
-        );
-      } finally {
+        setError(e?.message || "Se ha producido un error al recuperar el resumen de la entrevista.");
         setLoading(false);
       }
     };
 
-    fetchSummary();
-  }, [token]);
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, requestUrl]);
 
   return (
     <div className="HeyGenStreamingAvatar">
@@ -91,7 +151,7 @@ const ResultsPage: React.FC = () => {
           <div className="BrandLeft">
             <div className="BrandText">
               <span className="BrandName">AMINT</span>
-              <span className="BrandSubtitle">Informe de entrevista</span>
+              <span className="BrandSubtitle"> - Informe de entrevista</span>
             </div>
           </div>
         </div>
@@ -102,9 +162,15 @@ const ResultsPage: React.FC = () => {
           Token: <strong>{token}</strong>
         </p>
 
+        {!!debug && (
+          <p style={{ fontSize: 12, opacity: 0.55, marginTop: 0, marginBottom: 0 }}>
+            (debug) {debug}
+          </p>
+        )}
+
         {data?.createdAt && (
-          <p style={{ fontSize: 13, opacity: 0.6, marginTop: 0 }}>
-            Generado el: {new Date(data.createdAt.replace(" ", "T")).toLocaleString()}
+          <p style={{ fontSize: 13, opacity: 0.6, marginTop: 6 }}>
+            Generado el: {new Date(String(data.createdAt).replace(" ", "T")).toLocaleString()}
           </p>
         )}
 
@@ -130,7 +196,7 @@ const ResultsPage: React.FC = () => {
           </div>
         )}
 
-        {data && !loading && !error && (
+        {data && !loading && (
           <main
             style={{
               marginTop: 24,

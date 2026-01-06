@@ -1,22 +1,77 @@
-// server/server.js
-require("dotenv").config();
-
-const express = require("express");
-const cors = require("cors");
+// Server/server.js
 const path = require("path");
 const fs = require("fs");
 
+// ✅ Forzar a cargar SIEMPRE el .env dentro de /Server
+const ENV_PATH = path.join(__dirname, ".env");
+require("dotenv").config({ path: ENV_PATH });
+
+const express = require("express");
+const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
 
 let OpenAI = null;
-try { OpenAI = require("openai"); } catch {}
+try {
+  OpenAI = require("openai");
+} catch {}
 
 const app = express();
-app.use(cors({ origin: ["http://localhost:3000"] }));
+
+/**
+ * CORS:
+ * - En local: http://localhost:3000
+ * - En producción: añade dominios en ENV:
+ *   - PUBLIC_CLIENT_URL=https://xxxxx.trycloudflare.com
+ *   - CORS_ORIGINS=https://tuapp.com,https://www.amint.es
+ */
+const DEFAULT_ORIGINS = ["http://localhost:3000"];
+
+const extraOrigins = String(process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const allowedOrigins = Array.from(
+  new Set([
+    ...DEFAULT_ORIGINS,
+    ...extraOrigins,
+    ...(process.env.PUBLIC_CLIENT_URL ? [process.env.PUBLIC_CLIENT_URL.trim()] : []),
+  ])
+);
+
+// ✅ Logs útiles
+console.log("🧾 ENV loaded from:", ENV_PATH, "exists:", fs.existsSync(ENV_PATH));
+console.log("🌐 allowedOrigins (CORS):", allowedOrigins);
+console.log("🧾 PUBLIC_CLIENT_URL:", process.env.PUBLIC_CLIENT_URL || null);
+console.log("🧾 CORS_ORIGINS:", process.env.CORS_ORIGINS || null);
+
+// OJO: si llega sin origin (curl/postman) lo permitimos.
+app.use(
+  cors({
+    origin: function (origin, cb) {
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error("Not allowed by CORS: " + origin));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  })
+);
+
+// ✅ Para evitar problemas con preflight en algunos casos
+app.options("*", cors());
+
 app.use(express.json({ limit: "5mb" }));
 
 // Health
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// (Opcional) devolver URL pública del front según backend
+app.get("/api/public-app-url", (_req, res) => {
+  res.json({
+    publicAppUrl: String(process.env.PUBLIC_CLIENT_URL || "").trim() || null,
+  });
+});
 
 // ===============================
 // SQLite setup
@@ -25,6 +80,10 @@ const DATA_DIR = path.join(__dirname, "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const DB_PATH = path.join(DATA_DIR, "summaries.db");
+
+// ✅ Log CLAVE: cuál es la DB real que está usando ESTE backend
+console.log("🗄️ SQLite DB_PATH:", DB_PATH);
+
 const db = new sqlite3.Database(DB_PATH, (err) => {
   if (err) {
     console.error("❌ Error abriendo SQLite:", err);
@@ -59,6 +118,17 @@ function all(sql, params = []) {
 }
 
 async function initDb() {
+  // ✅ configs por entrevista (para que el candidato NO dependa de localStorage)
+  await run(`
+    CREATE TABLE IF NOT EXISTS interview_configs (
+      interviewId TEXT PRIMARY KEY,
+      configJson TEXT NOT NULL,
+      metaJson TEXT,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    )
+  `);
+
   await run(`
     CREATE TABLE IF NOT EXISTS summaries (
       interviewId TEXT PRIMARY KEY,
@@ -86,9 +156,141 @@ async function initDb() {
     )
   `);
 
-  console.log("✅ Tabla verificada");
+  console.log("✅ Tablas verificadas");
 }
 
+// ✅ ENDPOINT DEBUG: confirma DB + contadores + ENV real + CORS real
+app.get("/api/debug/db", async (_req, res) => {
+  try {
+    const row1 = await get(`SELECT COUNT(*) as n FROM interview_configs`);
+    const row2 = await get(`SELECT COUNT(*) as n FROM summaries`);
+    const row3 = await get(`SELECT COUNT(*) as n FROM groups`);
+    res.json({
+      ok: true,
+      envPathLoaded: ENV_PATH,
+      envFileExists: fs.existsSync(ENV_PATH),
+      dbPath: DB_PATH,
+      counts: {
+        interview_configs: row1?.n ?? null,
+        summaries: row2?.n ?? null,
+        groups: row3?.n ?? null,
+      },
+      env: {
+        PUBLIC_CLIENT_URL: process.env.PUBLIC_CLIENT_URL || null,
+        CORS_ORIGINS: process.env.CORS_ORIGINS || null,
+        PORT: process.env.PORT || null,
+      },
+      allowedOrigins,
+    });
+  } catch (e) {
+    console.error("❌ debug/db:", e);
+    res.status(500).json({ ok: false });
+  }
+});
+
+// ===============================
+// ✅ ENDPOINTS PUBLICOS PARA CONFIG DE ENTREVISTA
+// ===============================
+app.post("/api/save-interview-config", async (req, res) => {
+  try {
+    const { interviewId, config, meta } = req.body || {};
+    if (!interviewId || !config) {
+      return res.status(400).json({ error: "Faltan interviewId o config" });
+    }
+
+    const cfg = config || {};
+
+    // Validación mínima
+    if (
+      !cfg.objective ||
+      !cfg.tone ||
+      !Array.isArray(cfg.questions) ||
+      cfg.questions.length === 0 ||
+      !cfg.avatarId ||
+      !cfg.voiceId
+    ) {
+      return res.status(400).json({ error: "Config inválida (faltan campos)" });
+    }
+
+    const now = new Date().toISOString();
+    const id = String(interviewId);
+
+    await run(
+      `
+      INSERT INTO interview_configs (interviewId, configJson, metaJson, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(interviewId) DO UPDATE SET
+        configJson=excluded.configJson,
+        metaJson=excluded.metaJson,
+        updatedAt=excluded.updatedAt
+      `,
+      [id, JSON.stringify(cfg), meta ? JSON.stringify(meta) : null, now, now]
+    );
+
+    console.log("✅ SAVE CONFIG", {
+      interviewId: id,
+      bytes: JSON.stringify(cfg).length,
+      hasMeta: !!meta,
+    });
+
+    const check = await get(`SELECT interviewId FROM interview_configs WHERE interviewId = ?`, [id]);
+    console.log("✅ SAVE CONFIG CHECK", { interviewId: id, exists: !!check });
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("❌ save-interview-config:", e);
+    res.status(500).json({ error: "Error guardando config" });
+  }
+});
+
+app.get("/api/interview-config/:token", async (req, res) => {
+  try {
+    const token = String(req.params.token);
+    console.log("🔎 GET CONFIG", { token });
+
+    const row = await get(
+      `SELECT interviewId, configJson, metaJson, createdAt, updatedAt FROM interview_configs WHERE interviewId = ?`,
+      [token]
+    );
+
+    if (!row) {
+      const countRow = await get(`SELECT COUNT(*) as n FROM interview_configs`);
+      console.log("🔎 GET CONFIG MISS", { token, totalConfigs: countRow?.n ?? null });
+      return res.status(404).json({ error: "Config no encontrada" });
+    }
+
+    let config = null;
+    try {
+      config = JSON.parse(row.configJson || "{}");
+    } catch {
+      config = null;
+    }
+
+    if (!config) return res.status(500).json({ error: "Config corrupta en BD" });
+
+    let meta = undefined;
+    try {
+      meta = row.metaJson ? JSON.parse(row.metaJson) : undefined;
+    } catch {
+      meta = undefined;
+    }
+
+    res.json({
+      interviewId: row.interviewId,
+      config,
+      meta,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    });
+  } catch (e) {
+    console.error("❌ get interview-config:", e);
+    res.status(500).json({ error: "Error leyendo config" });
+  }
+});
+
+// ===============================
+// Global group summary (OpenAI)
+// ===============================
 const GROUP_SYSTEM_PROMPT = `
 Eres un consultor senior de research cualitativo (CX/UX/Market Research) especializado en hostelería/restauración.
 
@@ -115,9 +317,7 @@ Nº entrevistas en el grupo: ${group.interviewIds.length}
 Nº entrevistas con informe disponible: ${blocks.length}
 
 INFORMES INDIVIDUALES:
-${blocks
-  .map((b, i) => `--- ENTREVISTA ${i + 1} (${b.id}) ---\n${b.summary}`)
-  .join("\n\n")}
+${blocks.map((b, i) => `--- ENTREVISTA ${i + 1} (${b.id}) ---\n${b.summary}`).join("\n\n")}
 
 FORMATO:
 📌 0) Resumen ejecutivo (1 frase)
@@ -303,7 +503,6 @@ app.get("/api/group-summary/:groupId", async (req, res) => {
       if (cached?.summary?.trim()) return res.json(cached);
     }
 
-    // leer summaries individuales
     const blocks = [];
     for (const id of group.interviewIds) {
       const row = await get(`SELECT summary FROM summaries WHERE interviewId = ?`, [String(id)]);
@@ -356,6 +555,7 @@ const PORT = process.env.PORT || 3001;
 
 initDb()
   .then(() => {
+    console.log("✅ CORS allowed origins:", allowedOrigins);
     app.listen(PORT, () => {
       console.log(`🚀 Server de resúmenes escuchando en http://localhost:${PORT}`);
     });

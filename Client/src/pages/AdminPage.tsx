@@ -25,14 +25,14 @@ type InterviewMeta = {
   createdAt: string;
 };
 
-const API_BASE = "http://localhost:3001";
+const API_BASE = process.env.REACT_APP_API_BASE_URL || "http://localhost:3001";
+
+const PUBLIC_APP_URL =
+  (process.env.REACT_APP_PUBLIC_APP_URL || "").trim() || window.location.origin;
 
 const AdminPage: React.FC = () => {
-  // ✅ AHORA VACÍOS por defecto
   const [objective, setObjective] = useState("");
   const [questionsText, setQuestionsText] = useState("");
-
-  // (Si también quieres tono vacío, cambia a useState("") )
   const [tone, setTone] = useState("Cercano y exploratorio.");
 
   const [avatarId, setAvatarId] = useState("");
@@ -56,92 +56,109 @@ const AdminPage: React.FC = () => {
   const normalizedGroupId = normalizeGroupId(groupId);
   const makeNewGroupId = () => `rest-${Date.now().toString(36)}`;
 
+  const testBackend = async () => {
+    setMessage(null);
+    try {
+      const res = await fetch(`${API_BASE}/health`);
+      const json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setMessage(`✅ Backend OK en ${API_BASE} → ${JSON.stringify(json)}`);
+    } catch (e: any) {
+      setMessage(`❌ Backend NO accesible desde el navegador. ${e?.message || "Error"}`);
+    }
+  };
+
   const handleGenerateLinks = async () => {
     setMessage(null);
 
-    const questions = questionsText
-      .split("\n")
-      .map((q) => q.trim())
-      .filter(Boolean);
+    try {
+      const questions = questionsText
+        .split("\n")
+        .map((q) => q.trim())
+        .filter(Boolean);
 
-    if (!normalizedGroupId) {
-      setMessage("⚠️ Rellena el ID de grupo (restaurante).");
-      return;
-    }
-    if (!avatarId.trim() || !voiceId.trim()) {
-      setMessage("⚠️ Rellena Avatar ID y Voice ID.");
-      return;
-    }
-    if (!objective.trim()) {
-      setMessage("⚠️ Rellena el objetivo.");
-      return;
-    }
-    if (questions.length === 0) {
-      setMessage("⚠️ El guion debe tener al menos una pregunta.");
-      return;
-    }
-    if (numLinks <= 0) {
-      setMessage("⚠️ El número de enlaces debe ser al menos 1.");
-      return;
-    }
+      if (!normalizedGroupId) throw new Error("⚠️ Rellena el ID de grupo (restaurante).");
+      if (!avatarId.trim() || !voiceId.trim()) throw new Error("⚠️ Rellena Avatar ID y Voice ID.");
+      if (!objective.trim()) throw new Error("⚠️ Rellena el objetivo.");
+      if (questions.length === 0) throw new Error("⚠️ El guion debe tener al menos una pregunta.");
+      if (numLinks <= 0) throw new Error("⚠️ El número de enlaces debe ser al menos 1.");
 
-    const baseConfig: InterviewConfig = {
-      objective: objective.trim(),
-      tone: tone.trim(),
-      questions,
-      avatarId: avatarId.trim(),
-      voiceId: voiceId.trim(),
-    };
-
-    const nowIso = new Date().toISOString();
-    const base = Date.now().toString(36);
-    const newTokens: string[] = [];
-
-    // 1) Crear entrevistas (configs + meta)
-    for (let i = 0; i < numLinks; i++) {
-      const token = `${base}-${i + 1}`;
-
-      localStorage.setItem(`interview-config-${token}`, JSON.stringify(baseConfig));
-
-      const meta: InterviewMeta = {
-        interviewId: token,
-        groupId: normalizedGroupId,
-        restaurantName: restaurantName.trim() || undefined,
-        createdAt: nowIso,
+      const baseConfig: InterviewConfig = {
+        objective: objective.trim(),
+        tone: tone.trim(),
+        questions,
+        avatarId: avatarId.trim(),
+        voiceId: voiceId.trim(),
       };
-      localStorage.setItem(`interview-meta-${token}`, JSON.stringify(meta));
 
-      newTokens.push(token);
-    }
+      const nowIso = new Date().toISOString();
+      const base = Date.now().toString(36);
+      const newTokens: string[] = [];
 
-    // 2) Crear / actualizar grupo en localStorage
-    const groupKey = `interview-group-${normalizedGroupId}`;
-    const existingRaw = localStorage.getItem(groupKey);
+      // ✅ 1) Generar tokens y GUARDAR OBLIGATORIAMENTE en backend
+      for (let i = 0; i < numLinks; i++) {
+        const token = `${base}-${i + 1}`;
 
-    let existing: StoredGroup | null = null;
-    try {
-      existing = existingRaw ? (JSON.parse(existingRaw) as StoredGroup) : null;
-    } catch {
-      existing = null;
-    }
+        const meta: InterviewMeta = {
+          interviewId: token,
+          groupId: normalizedGroupId,
+          restaurantName: restaurantName.trim() || undefined,
+          createdAt: nowIso,
+        };
 
-    const mergedInterviewIds = Array.from(
-      new Set([...(existing?.interviewIds || []), ...newTokens])
-    );
+        const res = await fetch(`${API_BASE}/api/save-interview-config`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            interviewId: token,
+            config: baseConfig,
+            meta,
+          }),
+        });
 
-    const groupToSave: StoredGroup = {
-      groupId: normalizedGroupId,
-      restaurantName: restaurantName.trim() || existing?.restaurantName,
-      interviewIds: mergedInterviewIds,
-      createdAt: existing?.createdAt || nowIso,
-      updatedAt: nowIso,
-    };
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(
+            `❌ No se pudo guardar config en backend para token ${token}. Motivo: ${
+              j?.error || `HTTP ${res.status}`
+            }`
+          );
+        }
 
-    localStorage.setItem(groupKey, JSON.stringify(groupToSave));
+        // localStorage SOLO como debug (ya no es la fuente real)
+        localStorage.setItem(`interview-config-${token}`, JSON.stringify(baseConfig));
+        localStorage.setItem(`interview-meta-${token}`, JSON.stringify(meta));
 
-    // 3) Guardar el grupo también en backend
-    try {
-      const res = await fetch(`${API_BASE}/api/save-group`, {
+        newTokens.push(token);
+      }
+
+      // ✅ 2) Guardar/merge grupo en localStorage
+      const groupKey = `interview-group-${normalizedGroupId}`;
+      const existingRaw = localStorage.getItem(groupKey);
+
+      let existing: StoredGroup | null = null;
+      try {
+        existing = existingRaw ? (JSON.parse(existingRaw) as StoredGroup) : null;
+      } catch {
+        existing = null;
+      }
+
+      const mergedInterviewIds = Array.from(
+        new Set([...(existing?.interviewIds || []), ...newTokens])
+      );
+
+      const groupToSave: StoredGroup = {
+        groupId: normalizedGroupId,
+        restaurantName: restaurantName.trim() || existing?.restaurantName,
+        interviewIds: mergedInterviewIds,
+        createdAt: existing?.createdAt || nowIso,
+        updatedAt: nowIso,
+      };
+
+      localStorage.setItem(groupKey, JSON.stringify(groupToSave));
+
+      // ✅ 3) Guardar grupo en backend (obligatorio)
+      const resGroup = await fetch(`${API_BASE}/api/save-group`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -151,22 +168,40 @@ const AdminPage: React.FC = () => {
         }),
       });
 
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j?.error || `Error guardando grupo en backend (HTTP ${res.status})`);
+      if (!resGroup.ok) {
+        const j = await resGroup.json().catch(() => ({}));
+        throw new Error(j?.error || `❌ Error guardando grupo (HTTP ${resGroup.status})`);
       }
-    } catch (e: any) {
-      setMessage(
-        `⚠️ Grupo guardado localmente, pero NO en backend. Motivo: ${e?.message || "Error"}`
-      );
+
       setGeneratedTokens(newTokens);
-      return;
+      setMessage(`✅ Generados ${newTokens.length} enlace(s). Base pública: ${PUBLIC_APP_URL}`);
+    } catch (e: any) {
+      setGeneratedTokens([]);
+      setMessage(e?.message || "❌ Error generando enlaces");
+    }
+  };
+
+  const copyAllLinks = async () => {
+    if (generatedTokens.length === 0) return;
+    const lines: string[] = [];
+    lines.push(`Grupo: ${normalizedGroupId}`);
+    if (restaurantName.trim()) lines.push(`Restaurante: ${restaurantName.trim()}`);
+    lines.push("");
+
+    for (const token of generatedTokens) {
+      lines.push(`Candidato: ${PUBLIC_APP_URL}/candidate/${token}`);
+      lines.push(`Resultados: ${PUBLIC_APP_URL}/results/${token}`);
+      lines.push("");
     }
 
-    setGeneratedTokens(newTokens);
-    setMessage(
-      `✅ Generados ${newTokens.length} enlace(s). Grupo "${normalizedGroupId}" guardado en local y backend (${mergedInterviewIds.length} total).`
-    );
+    lines.push(`Informe global: ${PUBLIC_APP_URL}/results/group/${normalizedGroupId}`);
+
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setMessage("✅ Links copiados al portapapeles.");
+    } catch {
+      setMessage("⚠️ No se pudo copiar al portapapeles (permiso del navegador).");
+    }
   };
 
   return (
@@ -175,20 +210,27 @@ const AdminPage: React.FC = () => {
         <div className="BrandBar">
           <div className="BrandLeft">
             <div className="BrandText">
-              <span className="BrandName">AMINT</span>
+              <span className="BrandName">FLAV AI</span>
               <span className="BrandSubtitle"> - Panel de entrevistas</span>
             </div>
           </div>
         </div>
 
         <h1>🛠 Panel de administración</h1>
-        <p style={{ maxWidth: 820, textAlign: "left" }}>
-          Cada generación crea/actualiza un grupo y lo guarda también en backend para que el informe global funcione.
-        </p>
 
         <p style={{ marginTop: 8 }}>
           <Link to="/">← Volver a Home</Link>
         </p>
+
+        <p style={{ marginTop: 6, opacity: 0.7, fontSize: 13 }}>
+          API_BASE: <strong>{API_BASE}</strong>
+        </p>
+
+        <div style={{ marginTop: 10 }}>
+          <button className="PrimaryFlavButton" type="button" onClick={testBackend}>
+            🧪 Probar backend
+          </button>
+        </div>
 
         {message && (
           <p style={{ marginTop: 8, color: message.startsWith("✅") ? "#4ade80" : "#f87171" }}>
@@ -236,15 +278,9 @@ const AdminPage: React.FC = () => {
           </div>
 
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
-            <button
-              className="PrimaryFlavButton"
-              type="button"
-              onClick={() => setGroupId(makeNewGroupId())}
-            >
+            <button className="PrimaryFlavButton" type="button" onClick={() => setGroupId(makeNewGroupId())}>
               🔄 Nuevo grupo (ID automático)
             </button>
-
-            {/* ✅ ELIMINADO: botón "Ver informe global del grupo" */}
           </div>
 
           <hr style={{ margin: "18px 0", borderColor: "#374151" }} />
@@ -342,39 +378,38 @@ const AdminPage: React.FC = () => {
             <h2 style={{ marginTop: 0 }}>🔗 Enlaces generados</h2>
 
             <p style={{ fontSize: 14, opacity: 0.85 }}>
-              Grupo: <strong>{normalizedGroupId}</strong>
-              {restaurantName.trim() ? (
-                <>
-                  {" "}
-                  · Restaurante: <strong>{restaurantName.trim()}</strong>
-                </>
-              ) : null}
+              Base pública: <strong>{PUBLIC_APP_URL}</strong>
             </p>
+
+            <div style={{ marginTop: 10 }}>
+              <button className="PrimaryFlavButton" onClick={copyAllLinks}>
+                📋 Copiar todos
+              </button>
+            </div>
 
             <ul style={{ marginTop: 12, paddingLeft: 18 }}>
               {generatedTokens.map((token) => (
                 <li key={token} style={{ marginBottom: 12 }}>
                   <div>
                     <strong>Candidato:</strong>{" "}
-                    <a href={`http://localhost:3000/candidate/${token}`} target="_blank" rel="noreferrer">
-                      {`http://localhost:3000/candidate/${token}`}
+                    <a href={`${PUBLIC_APP_URL}/candidate/${token}`} target="_blank" rel="noreferrer">
+                      {`${PUBLIC_APP_URL}/candidate/${token}`}
                     </a>
                   </div>
                   <div>
                     <strong>Resultados:</strong>{" "}
-                    <a href={`http://localhost:3000/results/${token}`} target="_blank" rel="noreferrer">
-                      {`http://localhost:3000/results/${token}`}
+                    <a href={`${PUBLIC_APP_URL}/results/${token}`} target="_blank" rel="noreferrer">
+                      {`${PUBLIC_APP_URL}/results/${token}`}
                     </a>
                   </div>
                 </li>
               ))}
             </ul>
 
-            {/* (Puedes dejar este link, o si quieres también lo quitamos) */}
             <div style={{ marginTop: 14 }}>
               <strong>Informe global del grupo:</strong>{" "}
-              <a href={`http://localhost:3000/results/group/${normalizedGroupId}`} target="_blank" rel="noreferrer">
-                {`http://localhost:3000/results/group/${normalizedGroupId}`}
+              <a href={`${PUBLIC_APP_URL}/results/group/${normalizedGroupId}`} target="_blank" rel="noreferrer">
+                {`${PUBLIC_APP_URL}/results/group/${normalizedGroupId}`}
               </a>
             </div>
           </section>

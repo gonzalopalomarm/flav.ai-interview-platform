@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+const API_BASE = process.env.REACT_APP_API_BASE_URL || "http://localhost:3001";
+
 type StoredGroup = {
   groupId: string;
   restaurantName?: string;
@@ -25,20 +27,92 @@ function safeParseJson<T>(raw: string | null): T | null {
   }
 }
 
-const API_BASE = "http://localhost:3001";
-
 const GROUP_SYSTEM_PROMPT = `
-Eres un consultor senior de research cualitativo (CX/UX/Market Research) especializado en hostelería/restauración.
+Actúa como un/a profesional senior en sociología y estudios cualitativos, con amplia experiencia en investigación cualitativa, Voice of the Customer y análisis de experiencia de cliente en restauración, así como en la elaboración de informes estratégicos para empresas e instituciones.
 
-Vas a recibir VARIOS informes individuales (ya resumidos) de entrevistas del mismo restaurante/grupo.
-Tu tarea es crear UN ÚNICO INFORME GLOBAL, más profesional y visual, siguiendo una estructura muy similar a la de los informes individuales.
+Tu rol es elaborar un INFORME GLOBAL de investigación cualitativa a partir de múltiples entrevistas individuales a clientes, centradas exclusivamente en su experiencia en un restaurante (servicio, atención, ambiente, tiempos, interacción con el personal y percepción global).
 
-Reglas:
-- Responde en ESPAÑOL.
-- No inventes datos. Solo sintetiza lo que aparece en los informes individuales.
-- Debes detectar patrones repetidos, tensiones, contradicciones, y prioridades.
-- Mantén formato muy visual, con emojis, títulos claros, y bullets que NO sean demasiado cortos (aporta contexto).
-- NO escribas un texto largo sin estructura.
+No estamos testando producto (comida o bebida de forma aislada), sino la experiencia completa del cliente en el restaurante.
+
+Asume que:
+- Cada entrevista ya ha sido analizada individualmente
+- Tu tarea es realizar una síntesis transversal del conjunto
+- Debes identificar patrones comunes, diferencias relevantes y tensiones entre discursos
+
+Cuando te proporcione el conjunto de entrevistas (o sus análisis individuales), deberás:
+
+1. RESUMEN EJECUTIVO GLOBAL  
+Elaborar un resumen ejecutivo claro y accionable, orientado a decisores:
+- Principales aprendizajes globales sobre la experiencia en restaurante  
+- Qué funciona de forma consistente y qué genera fricción  
+- Tensiones y contradicciones entre perfiles de clientes  
+- Insight clave que mejor explica la experiencia global  
+
+2. GRANDES INSIGHTS TRANSVERSALES  
+Identifica los insights cualitativos más relevantes:
+- Deben surgir de la repetición, recurrencia o fuerza del discurso  
+- Indica si cada insight es mayoritario, recurrente o puntual pero significativo  
+- Redáctalos como aprendizajes interpretativos, no como opiniones literales  
+- Conecta emociones, expectativas, comportamientos y decisiones  
+
+3. VERBATIMS REPRESENTATIVOS  
+Incluye verbatims seleccionados:
+- Representativos del conjunto de entrevistas  
+- Asociados claramente a cada insight  
+- Indicando, cuando aporte valor, si reflejan una opinión compartida o una tensión  
+- Evita verbatims aislados sin respaldo analítico  
+
+4. MAPA GLOBAL DE LA EXPERIENCIA EN RESTAURANTE  
+Construye una visión integrada del customer journey:
+- Antes de la visita  
+- Llegada y primera impresión  
+- Servicio y atención  
+- Gestión del tiempo y esperas  
+- Pago y cierre  
+- Recuerdo y predisposición a volver o recomendar  
+
+Para cada etapa:
+- Qué funciona  
+- Qué falla  
+- Qué genera emoción positiva o negativa  
+
+5. DIFERENCIAS Y TENSIONES ENTRE CLIENTES  
+Identifica diferencias relevantes en la experiencia:
+- Expectativas vs. realidad  
+- Clientes habituales vs. nuevos  
+- Sensibilidad al servicio, al tiempo o al trato  
+- Momentos donde no hay consenso  
+
+6. IMPLICACIONES ESTRATÉGICAS PRIORITARIAS  
+Traduce los hallazgos en implicaciones claras:
+- Para la mejora de la experiencia en restaurante  
+- Para operaciones, personal de sala, procesos o comunicación  
+- Distingue entre quick wins y cambios estructurales  
+- Prioriza según impacto potencial en satisfacción, fidelización y recomendación  
+
+7. APRENDIZAJES CLAVE PARA DECISIÓN  
+Resume:
+- 3–5 aprendizajes que un decisor debe recordar  
+- Qué no se debería ignorar  
+- Qué oportunidad clara emerge del conjunto  
+
+8. OBSERVACIONES METODOLÓGICAS  
+Incluye notas propias de investigación cualitativa:
+- Saturación de discursos detectada o no  
+- Límites del estudio  
+- Hipótesis emergentes a validar cuantitativamente  
+- Nuevas preguntas que surgen del análisis global  
+
+Estilo y tono:
+- Profesional, claro y estructurado  
+- Propio de informes de investigación cualitativa de alto nivel  
+- Interpretativo y sintético  
+- Sin jerga innecesaria ni frases genéricas  
+
+Asume que este informe será utilizado para tomar decisiones estratégicas sobre la experiencia en restaurante.
+Nivel de exigencia: consultora estratégica / instituto de investigación cualitativa.
+No actúes como un resumidor automático, sino como un/a analista experto/a que sintetiza y aporta visión estratégica.
+
 `.trim();
 
 const ResultsGroupPage: React.FC = () => {
@@ -61,6 +135,9 @@ const ResultsGroupPage: React.FC = () => {
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [globalText, setGlobalText] = useState<string>("");
 
+  // ✅ NUEVO: estado para controlar qué resumen se está eliminando
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   const groupStorageKey = useMemo(() => {
     return groupId ? `interview-group-${groupId}` : "";
   }, [groupId]);
@@ -68,6 +145,32 @@ const ResultsGroupPage: React.FC = () => {
   const globalCacheKey = useMemo(() => {
     return groupId ? `group-global-sum-${groupId}` : "";
   }, [groupId]);
+
+  // ✅ NUEVO: persistimos “resúmenes eliminados” por grupo (fallback si no existe DELETE backend)
+  const hiddenSummariesKey = useMemo(() => {
+    return groupId ? `hidden-summaries-${groupId}` : "";
+  }, [groupId]);
+
+  function getHiddenSet(): Set<string> {
+    if (!hiddenSummariesKey) return new Set();
+    const raw = localStorage.getItem(hiddenSummariesKey);
+    const arr = safeParseJson<string[]>(raw) || [];
+    return new Set(arr.map(String));
+  }
+
+  function addHidden(id: string) {
+    if (!hiddenSummariesKey) return;
+    const s = getHiddenSet();
+    s.add(String(id));
+    localStorage.setItem(hiddenSummariesKey, JSON.stringify(Array.from(s)));
+  }
+
+  function removeHidden(id: string) {
+    if (!hiddenSummariesKey) return;
+    const s = getHiddenSet();
+    s.delete(String(id));
+    localStorage.setItem(hiddenSummariesKey, JSON.stringify(Array.from(s)));
+  }
 
   async function loadGroup(): Promise<StoredGroup> {
     // 1) Backend (si existe)
@@ -115,8 +218,13 @@ const ResultsGroupPage: React.FC = () => {
       const ids = g.interviewIds || [];
       if (ids.length === 0) return;
 
+      const hidden = getHiddenSet(); // ✅ NUEVO
+
       const results = await Promise.allSettled(
         ids.map(async (id) => {
+          // ✅ NUEVO: si se marcó como eliminado en esta UI, lo tratamos como inexistente
+          if (hidden.has(String(id))) return { id, data: null as SummaryResponse | null };
+
           const res = await fetch(`${API_BASE}/api/summary/${encodeURIComponent(id)}`);
           if (!res.ok) return { id, data: null as SummaryResponse | null };
 
@@ -156,9 +264,7 @@ const ResultsGroupPage: React.FC = () => {
   }
 
   function buildGlobalPrompt(g: StoredGroup, blocks: { id: string; summary: string }[]) {
-    const restaurantLabel = g.restaurantName
-      ? `Restaurante: ${g.restaurantName}`
-      : `Grupo: ${g.groupId}`;
+    const restaurantLabel = g.restaurantName ? `Restaurante: ${g.restaurantName}` : `Grupo: ${g.groupId}`;
 
     return `
 ${restaurantLabel}
@@ -213,12 +319,10 @@ Importante:
     setGlobalLoading(true);
 
     try {
-      // cache local
       if (!refresh && globalCacheKey) {
         const cached = localStorage.getItem(globalCacheKey) || "";
         if (cached.trim()) {
           setGlobalText(cached);
-          setGlobalLoading(false);
           return;
         }
       }
@@ -238,9 +342,7 @@ Importante:
         .filter(Boolean) as { id: string; summary: string }[];
 
       if (blocks.length === 0) {
-        setGlobalError(
-          "No hay resúmenes individuales disponibles arriba para construir el informe global."
-        );
+        setGlobalError("No hay resúmenes individuales disponibles arriba para construir el informe global.");
         return;
       }
 
@@ -288,6 +390,53 @@ Importante:
     }
   }
 
+  // ✅ NUEVO: eliminar resumen individual (token)
+  async function deleteSummary(interviewId: string) {
+    if (!group) return;
+    const id = String(interviewId);
+
+    const ok = window.confirm(`¿Eliminar el resumen de la entrevista "${id}"?`);
+    if (!ok) return;
+
+    setDeletingId(id);
+    setError(null);
+
+    try {
+      // Intento backend: DELETE /api/summary/:id
+      const res = await fetch(`${API_BASE}/api/summary/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+
+      if (res.ok) {
+        // borrado real en servidor
+        removeHidden(id);
+      } else {
+        // fallback: lo ocultamos en UI (persistente) aunque el backend no permita borrar
+        addHidden(id);
+      }
+
+      // UI inmediata: lo quitamos del estado
+      setSummaries((prev) => ({ ...prev, [id]: null }));
+
+      // asegurar que aparezca en “faltan resúmenes”
+      setMissing((prev) => {
+        const s = new Set(prev);
+        s.add(id);
+        return Array.from(s);
+      });
+
+      // invalidar cache del informe global (para que no use resúmenes antiguos)
+      if (globalCacheKey) {
+        localStorage.removeItem(globalCacheKey);
+        setGlobalText("");
+      }
+    } catch (e: any) {
+      setError(e?.message || "Error eliminando el resumen.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   useEffect(() => {
     const run = async () => {
       try {
@@ -303,7 +452,6 @@ Importante:
         const g = await loadGroup();
         setGroup(g);
 
-        // cache global local
         const cachedGlobal = globalCacheKey ? localStorage.getItem(globalCacheKey) || "" : "";
         setGlobalText(cachedGlobal);
 
@@ -444,7 +592,7 @@ Importante:
             >
               <strong>⚠️ Faltan resúmenes para:</strong> {missing.join(", ")}
               <div style={{ marginTop: 6, fontSize: 13, opacity: 0.85 }}>
-                (Si esas entrevistas aún no han terminado o no han guardado el summary en el backend.)
+                (Si esas entrevistas aún no han terminado o no han guardado el summary en el backend, o si lo has eliminado.)
               </div>
             </div>
           )}
@@ -487,14 +635,28 @@ Importante:
                       ) : null}
                     </div>
 
-                    <a
-                      href={`/results/${encodeURIComponent(id)}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ opacity: 0.9, textDecoration: "none" }}
-                    >
-                      Abrir individual ↗
-                    </a>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <a
+                        href={`/results/${encodeURIComponent(id)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ opacity: 0.9, textDecoration: "none" }}
+                      >
+                        Abrir individual ↗
+                      </a>
+
+                      {/* ✅ BOTÓN NUEVO */}
+                      {hasSummary && (
+                        <button
+                          className="PrimaryFlavButton"
+                          onClick={() => deleteSummary(id)}
+                          disabled={deletingId === id}
+                          title="Eliminar el resumen"
+                        >
+                          {deletingId === id ? "⏳ Eliminando…" : "🗑 Eliminar resumen"}
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <details open={openAll} style={{ padding: 14 }}>
@@ -523,7 +685,7 @@ Importante:
                     >
                       {hasSummary
                         ? s!.summary
-                        : "Todavía no existe summary para este token (o no se ha guardado en el backend)."}
+                        : "Todavía no existe summary para este token (o no se ha guardado en el backend, o lo has eliminado)."}
                     </div>
                   </details>
                 </div>
@@ -615,9 +777,7 @@ Importante:
                 lineHeight: 1.6,
               }}
             >
-              {globalText?.trim()
-                ? globalText
-                : "Aún no hay informe global generado. Pulsa “Generar”."}
+              {globalText?.trim() ? globalText : "Aún no hay informe global generado. Pulsa “Generar”."}
             </div>
           </details>
         </section>

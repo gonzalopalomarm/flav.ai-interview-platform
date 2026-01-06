@@ -20,229 +20,182 @@ type StoredGroup = {
 
 type CacheStatus = "unknown" | "missing" | "ready" | "error";
 
-const API_BASE = "http://localhost:3001";
+const API_BASE = process.env.REACT_APP_API_BASE_URL || "http://localhost:3001";
 
 const ResultsListPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<GroupRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // por grupo: si existe cache global en backend
   const [cacheMap, setCacheMap] = useState<Record<string, CacheStatus>>({});
   const [busyMap, setBusyMap] = useState<Record<string, boolean>>({});
   const [rowMsg, setRowMsg] = useState<Record<string, string>>({});
 
-  // Lee todos los grupos guardados en localStorage: interview-group-<groupId>
+  // =========================
+  // CARGAR GRUPOS DESDE LOCALSTORAGE
+  // =========================
   const localStorageGroups = useMemo(() => {
     const groups: GroupRow[] = [];
 
     try {
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (!k) continue;
-        if (!k.startsWith("interview-group-")) continue;
+        if (!k || !k.startsWith("interview-group-")) continue;
 
         const raw = localStorage.getItem(k);
         if (!raw) continue;
 
         const parsed = JSON.parse(raw) as StoredGroup;
-
         const groupId =
-          parsed?.groupId ||
-          k.replace("interview-group-", "").trim() ||
-          "grupo-sin-id";
-
-        const interviewIds = Array.isArray(parsed?.interviewIds)
-          ? parsed.interviewIds.map(String).filter(Boolean)
-          : [];
+          parsed?.groupId || k.replace("interview-group-", "").trim();
 
         groups.push({
           groupId,
-          restaurantName: parsed?.restaurantName ? String(parsed.restaurantName) : undefined,
-          interviewIds,
-          createdAt: parsed?.createdAt ? String(parsed.createdAt) : undefined,
-          updatedAt: parsed?.updatedAt ? String(parsed.updatedAt) : undefined,
+          restaurantName: parsed?.restaurantName,
+          interviewIds: Array.isArray(parsed?.interviewIds)
+            ? parsed.interviewIds
+            : [],
+          createdAt: parsed?.createdAt,
+          updatedAt: parsed?.updatedAt,
         });
       }
-    } catch (e: any) {
-      console.error("Error leyendo interview-group-*:", e);
+    } catch (e) {
+      console.error("Error leyendo grupos:", e);
     }
 
-    // orden: updatedAt desc (si existe), si no createdAt desc, si no groupId
+    // ordenar
     groups.sort((a, b) => {
-      const ad = a.updatedAt
-        ? Date.parse(a.updatedAt.replace(" ", "T"))
-        : a.createdAt
-        ? Date.parse(a.createdAt.replace(" ", "T"))
-        : 0;
-      const bd = b.updatedAt
-        ? Date.parse(b.updatedAt.replace(" ", "T"))
-        : b.createdAt
-        ? Date.parse(b.createdAt.replace(" ", "T"))
-        : 0;
-
-      if (ad !== bd) return bd - ad;
-      return b.groupId.localeCompare(a.groupId);
+      const ad = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+      const bd = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+      return bd - ad;
     });
 
-    // sin duplicados por groupId
     const map = new Map<string, GroupRow>();
     for (const g of groups) map.set(g.groupId, g);
     return Array.from(map.values());
   }, []);
 
-  // 1) cargar grupos
   useEffect(() => {
-    const run = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        setRows(localStorageGroups);
-      } catch (e: any) {
-        setRows([]);
-        setError(e?.message || "No se ha podido cargar el listado de grupos.");
-      } finally {
-        setLoading(false);
-      }
-    };
-    run();
+    setLoading(true);
+    setRows(localStorageGroups);
+    setLoading(false);
   }, [localStorageGroups]);
 
-  // 2) mirar cache global en backend para cada grupo
+  // =========================
+  // COMPROBAR CACHE GLOBAL
+  // =========================
   useEffect(() => {
-    const checkAll = async () => {
-      const next: Record<string, CacheStatus> = {};
-      for (const g of rows) next[g.groupId] = "unknown";
-      setCacheMap((prev) => ({ ...next, ...prev }));
-
-      await Promise.all(
-        rows.map(async (g) => {
-          try {
-            const res = await fetch(
-              `${API_BASE}/api/group-summary-cache/${encodeURIComponent(g.groupId)}`
-            );
-            if (res.ok) {
-              setCacheMap((m) => ({ ...m, [g.groupId]: "ready" }));
-            } else if (res.status === 404) {
-              setCacheMap((m) => ({ ...m, [g.groupId]: "missing" }));
-            } else {
-              setCacheMap((m) => ({ ...m, [g.groupId]: "error" }));
-            }
-          } catch {
-            setCacheMap((m) => ({ ...m, [g.groupId]: "error" }));
-          }
-        })
-      );
-    };
-
-    if (rows.length) checkAll();
+    rows.forEach(async (g) => {
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/group-summary-cache/${encodeURIComponent(g.groupId)}`
+        );
+        if (res.ok) {
+          setCacheMap((m) => ({ ...m, [g.groupId]: "ready" }));
+        } else if (res.status === 404) {
+          setCacheMap((m) => ({ ...m, [g.groupId]: "missing" }));
+        } else {
+          setCacheMap((m) => ({ ...m, [g.groupId]: "error" }));
+        }
+      } catch {
+        setCacheMap((m) => ({ ...m, [g.groupId]: "error" }));
+      }
+    });
   }, [rows]);
 
+  // =========================
+  // GENERAR INFORME GLOBAL
+  // =========================
   async function generateGlobal(groupId: string) {
-    setRowMsg((m) => ({ ...m, [groupId]: "" }));
     setBusyMap((m) => ({ ...m, [groupId]: true }));
+    setRowMsg((m) => ({ ...m, [groupId]: "" }));
 
     try {
       const res = await fetch(
         `${API_BASE}/api/group-summary/${encodeURIComponent(groupId)}`
       );
 
-      const json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error("Error generando informe");
 
-      if (!res.ok) {
-        const msg =
-          json?.error ||
-          `Error HTTP ${res.status}. Revisa el server y la consola.`;
-        setRowMsg((m) => ({ ...m, [groupId]: `⚠️ ${msg}` }));
-        setCacheMap((m) => ({ ...m, [groupId]: "error" }));
-        return;
-      }
-
-      setRowMsg((m) => ({ ...m, [groupId]: "✅ Informe global generado" }));
+      setRowMsg((m) => ({ ...m, [groupId]: "✅ Informe generado" }));
       setCacheMap((m) => ({ ...m, [groupId]: "ready" }));
     } catch (e: any) {
-      setRowMsg((m) => ({
-        ...m,
-        [groupId]: `⚠️ ${e?.message || "Error generando informe"}`,
-      }));
+      setRowMsg((m) => ({ ...m, [groupId]: `⚠️ ${e.message}` }));
       setCacheMap((m) => ({ ...m, [groupId]: "error" }));
     } finally {
       setBusyMap((m) => ({ ...m, [groupId]: false }));
     }
   }
 
+  // =========================
+  // ELIMINAR GRUPO (NUEVA COLUMNA)
+  // =========================
+  async function deleteGroup(groupId: string) {
+    const ok = window.confirm(
+      `¿Seguro que quieres eliminar el grupo "${groupId}"?\n\nEsta acción no se puede deshacer.`
+    );
+    if (!ok) return;
+
+    // UI inmediata
+    setRows((prev) => prev.filter((g) => g.groupId !== groupId));
+
+    // limpiar caches locales
+    localStorage.removeItem(`interview-group-${groupId}`);
+    localStorage.removeItem(`group-global-sum-${groupId}`);
+
+    // backend (si existe)
+    try {
+      await fetch(`${API_BASE}/api/group/${encodeURIComponent(groupId)}`, {
+        method: "DELETE",
+      });
+    } catch {
+      // silencioso
+    }
+  }
+
+  // =========================
+  // RENDER
+  // =========================
   return (
     <div className="HeyGenStreamingAvatar">
       <header className="App-header" style={{ alignItems: "flex-start" }}>
-        <h1 style={{ marginBottom: 6 }}>📋 Results — Grupos</h1>
-        <p style={{ fontSize: 14, opacity: 0.8, marginTop: 0 }}>
-          Aquí puedes generar y abrir el informe global de cada grupo.
-        </p>
+        <h1>📋 Results — Grupos</h1>
 
-        <p style={{ marginTop: 10 }}>
+        <p>
           <Link to="/">← Volver a Home</Link>
         </p>
 
-        {loading && <p style={{ marginTop: 16 }}>⏳ Cargando…</p>}
-
-        {error && !loading && (
-          <p style={{ marginTop: 16, opacity: 0.8 }}>⚠️ {error}</p>
-        )}
-
-        {!loading && rows.length === 0 && (
-          <div
-            style={{
-              marginTop: 18,
-              padding: 16,
-              borderRadius: 12,
-              border: "1px solid rgba(255,255,255,0.15)",
-              background: "rgba(2,6,23,0.6)",
-              maxWidth: 900,
-            }}
-          >
-            <strong>No hay grupos aún.</strong>
-            <div style={{ marginTop: 6, fontSize: 14, opacity: 0.85 }}>
-              Genera enlaces desde Admin para que se creen grupos automáticamente.
-            </div>
-          </div>
-        )}
+        {loading && <p>⏳ Cargando…</p>}
+        {error && <p>⚠️ {error}</p>}
 
         {!loading && rows.length > 0 && (
-          <div
-            className="ResultsTableWrap"
-            style={{ marginTop: 18, width: "100%", maxWidth: 1150 }}
-          >
+          <div style={{ marginTop: 18, width: "100%", maxWidth: 1200 }}>
             <table className="ResultsTable">
               <thead>
                 <tr>
                   <th>ID grupo / restaurante</th>
-                  <th style={{ width: 120 }}>#</th>
-                  <th style={{ width: 260 }}>Informe global</th>
-                  <th style={{ width: 220 }}>Acción</th>
-                  <th style={{ width: 360 }}>Entrevistas</th>
+                  <th>#</th>
+                  <th>Informe global</th>
+                  <th>Acción</th>
+                  <th>Entrevistas</th>
+                  <th style={{ width: 120 }}>Eliminar</th>
                 </tr>
               </thead>
 
               <tbody>
                 {rows.map((g) => {
-                  const safeGroupId = encodeURIComponent(g.groupId);
-                  const count = g.interviewIds?.length || 0;
-
+                  const count = g.interviewIds.length;
                   const status = cacheMap[g.groupId] || "unknown";
-                  const busy = !!busyMap[g.groupId];
-                  const msg = rowMsg[g.groupId];
+                  const busy = busyMap[g.groupId];
 
                   return (
                     <tr key={g.groupId}>
                       <td style={{ fontWeight: 800 }}>
                         {g.groupId}
-                        {g.restaurantName ? (
-                          <div style={{ fontWeight: 500, opacity: 0.75, marginTop: 4 }}>
-                            {g.restaurantName}
-                          </div>
-                        ) : null}
-
-                        <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                        {g.restaurantName && (
+                          <div style={{ opacity: 0.7 }}>{g.restaurantName}</div>
+                        )}
+                        <div style={{ fontSize: 12, opacity: 0.75 }}>
                           Estado global:{" "}
                           {status === "ready"
                             ? "✅ generado"
@@ -251,15 +204,14 @@ const ResultsListPage: React.FC = () => {
                             : status === "error"
                             ? "⚠️ error"
                             : "…"}
-                          {msg ? <div style={{ marginTop: 4 }}>{msg}</div> : null}
                         </div>
                       </td>
 
-                      <td style={{ fontWeight: 700 }}>{count}</td>
+                      <td>{count}</td>
 
                       <td>
                         <a
-                          href={`/results/group/${safeGroupId}`}
+                          href={`/results/group/${encodeURIComponent(g.groupId)}`}
                           target="_blank"
                           rel="noreferrer"
                         >
@@ -279,38 +231,31 @@ const ResultsListPage: React.FC = () => {
 
                       <td>
                         <details>
-                          <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+                          <summary style={{ cursor: "pointer" }}>
                             Ver entrevistas ({count})
                           </summary>
-
-                          <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-                            {g.interviewIds.map((id) => {
-                              const safeId = encodeURIComponent(id);
-                              return (
-                                <a
-                                  key={id}
-                                  href={`/results/${safeId}`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  style={{ wordBreak: "break-all" }}
-                                >
-                                  {id}
-                                </a>
-                              );
-                            })}
+                          <div style={{ marginTop: 8 }}>
+                            {g.interviewIds.map((id) => (
+                              <div key={id}>{id}</div>
+                            ))}
                           </div>
                         </details>
+                      </td>
+
+                      {/* 👇 COLUMNA NUEVA A LA DERECHA DEL TODO */}
+                      <td>
+                        <button
+                          className="PrimaryFlavButton"
+                          onClick={() => deleteGroup(g.groupId)}
+                        >
+                          🗑 Eliminar
+                        </button>
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
-
-            <p style={{ marginTop: 12, fontSize: 13, opacity: 0.75 }}>
-              Nota: el informe global se genera en backend con{" "}
-              <code>/api/group-summary/:groupId</code>.
-            </p>
           </div>
         )}
       </header>
