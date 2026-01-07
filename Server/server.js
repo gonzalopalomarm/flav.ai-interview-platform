@@ -44,6 +44,7 @@ console.log("🧾 ENV loaded from:", ENV_PATH, "exists:", fs.existsSync(ENV_PATH
 console.log("🌐 allowedOrigins (CORS):", allowedOrigins);
 console.log("🧾 PUBLIC_CLIENT_URL:", process.env.PUBLIC_CLIENT_URL || null);
 console.log("🧾 CORS_ORIGINS:", process.env.CORS_ORIGINS || null);
+console.log("🧾 PORT (env):", process.env.PORT || null);
 
 // OJO: si llega sin origin (curl/postman) lo permitimos.
 app.use(
@@ -63,7 +64,13 @@ app.options("*", cors());
 
 app.use(express.json({ limit: "5mb" }));
 
-// Health
+// ===============================
+// ✅ PASO C: endpoints simples para comprobar que el server está vivo
+// ===============================
+app.get("/", (_req, res) => res.status(200).send("OK - flavaai api"));
+app.get("/healthz", (_req, res) => res.status(200).json({ ok: true }));
+
+// (Mantengo tu health anterior por compatibilidad)
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // (Opcional) devolver URL pública del front según backend
@@ -551,13 +558,15 @@ app.get("/api/group-summary/:groupId", async (req, res) => {
 });
 
 // ===============================
-const PORT = process.env.PORT || 3001;
+// ✅ Render-compatible listen: PORT + 0.0.0.0 + log correcto
+// ===============================
+const PORT = Number(process.env.PORT || 3001);
 
 initDb()
   .then(() => {
     console.log("✅ CORS allowed origins:", allowedOrigins);
-    app.listen(PORT, () => {
-      console.log(`🚀 Server de resúmenes escuchando en http://localhost:${PORT}`);
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`🚀 Server listening on http://0.0.0.0:${PORT}`);
     });
   })
   .catch((e) => {
