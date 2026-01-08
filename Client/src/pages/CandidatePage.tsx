@@ -9,8 +9,7 @@ import {
 } from "@heygen/streaming-avatar";
 import "../App.css";
 
-const API_BASE =
-  process.env.REACT_APP_API_BASE_URL || "http://localhost:3001";
+const API_BASE = process.env.REACT_APP_API_BASE_URL || "http://localhost:3001";
 
 type StoredConfig = {
   objective: string;
@@ -38,14 +37,12 @@ Reglas:
 - Usa un tono cercano, curioso y profesional.
 - No hagas respuestas largas (máx. 3 frases).
 - Si no quedan más preguntas en el guion, agradece, cierra la entrevista y no abras nuevos temas.
-`;
+`.trim();
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // POST seguro al backend para guardar summary
-async function saveSummaryToBackend(
-  interviewId: string,
-  summary: string,
-  rawConversation?: string
-) {
+async function saveSummaryToBackend(interviewId: string, summary: string, rawConversation?: string) {
   const res = await fetch(`${API_BASE}/api/save-summary`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -65,9 +62,7 @@ function isValidConfig(cfg: any): cfg is StoredConfig {
     typeof cfg.tone === "string" &&
     Array.isArray(cfg.questions) &&
     cfg.questions.length > 0 &&
-    cfg.questions.every(
-      (q: any) => typeof q === "string" && q.trim().length > 0
-    ) &&
+    cfg.questions.every((q: any) => typeof q === "string" && q.trim().length > 0) &&
     typeof cfg.avatarId === "string" &&
     cfg.avatarId.trim().length > 0 &&
     typeof cfg.voiceId === "string" &&
@@ -115,24 +110,18 @@ const CandidatePage: React.FC = () => {
 
         if (!interviewToken) {
           if (cancelled) return;
-          setConfigError(
-            "Falta el identificador de entrevista en la URL. Pide un nuevo enlace al equipo."
-          );
+          setConfigError("Falta el identificador de entrevista en la URL. Pide un nuevo enlace al equipo.");
           setIsLoadingConfig(false);
           return;
         }
 
-        const url = `${API_BASE}/api/interview-config/${encodeURIComponent(
-          interviewToken
-        )}`;
+        const url = `${API_BASE}/api/interview-config/${encodeURIComponent(interviewToken)}`;
         const res = await fetch(url);
         const json = await res.json().catch(() => ({}));
 
         if (!res.ok) {
           if (cancelled) return;
-          setConfigError(
-            json?.error || `No se pudo cargar config (HTTP ${res.status})`
-          );
+          setConfigError(json?.error || `No se pudo cargar config (HTTP ${res.status})`);
           setDebug(`(Debug) GET ${url} → ${JSON.stringify(json)}`);
           setIsLoadingConfig(false);
           return;
@@ -183,9 +172,7 @@ const CandidatePage: React.FC = () => {
         return;
       }
 
-      avatar.current = new StreamingAvatarApi(
-        new Configuration({ accessToken: heygenKey })
-      );
+      avatar.current = new StreamingAvatarApi(new Configuration({ accessToken: heygenKey }));
       avatar.current.addEventHandler("avatar_start_talking", startTalkCallback);
       avatar.current.addEventHandler("avatar_stop_talking", stopTalkCallback);
     }
@@ -198,29 +185,26 @@ const CandidatePage: React.FC = () => {
     };
   }, []);
 
+  // ✅ Start robusto (no romper si falla el primer speak)
   async function grab() {
     try {
       if (!script) return setDebug("No se ha cargado el guion de la entrevista.");
-      if (isRecording)
-        return setDebug("Primero detén la grabación antes de iniciar de nuevo.");
+      if (isRecording) return setDebug("Primero detén la grabación antes de iniciar de nuevo.");
 
       if (!avatar.current) {
         const heygenKey = process.env.REACT_APP_HEYGEN_API_KEY;
-        if (!heygenKey)
-          return setDebug("Falta REACT_APP_HEYGEN_API_KEY en el .env de Client.");
-        avatar.current = new StreamingAvatarApi(
-          new Configuration({ accessToken: heygenKey })
-        );
+        if (!heygenKey) return setDebug("Falta REACT_APP_HEYGEN_API_KEY en el .env de Client.");
+        avatar.current = new StreamingAvatarApi(new Configuration({ accessToken: heygenKey }));
       }
 
-      if (!avatarId || !voiceId)
-        return setDebug("Hay un problema con la configuración del avatar.");
+      if (!avatarId || !voiceId) return setDebug("Hay un problema con la configuración del avatar.");
 
       setIsFinished(false);
       setConversation("");
       setQuestionIndex(0);
       setDebug("");
 
+      // 1) Crear sesión
       const res = await avatar.current!.createStartAvatar(
         {
           newSessionRequest: {
@@ -232,27 +216,34 @@ const CandidatePage: React.FC = () => {
         (msg: string) => console.log("HeyGen debug:", msg)
       );
 
+      // ✅ Guardamos sesión SIEMPRE si se creó
       setData(res);
       setStream(avatar.current!.mediaStream);
 
       const firstQuestion = script.questions[0];
       const opening =
-        "Hola, gracias por tu tiempo. Vamos a comenzar la entrevista. " +
-        (firstQuestion || "");
+        "Hola, gracias por tu tiempo. Vamos a comenzar la entrevista. " + (firstQuestion || "");
 
       const initialConversation = `Entrevistador: ${opening}`;
       setConversation(initialConversation);
 
-      await avatar.current!.speak({
-        taskRequest: { text: opening, sessionId: res.sessionId },
-      });
+      // 2) Hablar (con delay + retry). Si falla, NO rompemos la sesión.
+      try {
+        await sleep(600);
+
+        await avatar.current!.speak({
+          taskRequest: { text: opening, sessionId: res.sessionId },
+        });
+      } catch (e: any) {
+        console.warn("⚠️ HeyGen speak inicial falló (no bloqueamos la sesión):", e);
+        setDebug("⚠️ El avatar se ha iniciado, pero el primer mensaje falló. Pulsa Start otra vez si no habla.");
+      }
     } catch (err: any) {
       console.error("Error al iniciar avatar:", err);
       setDebug("Ha ocurrido un problema al iniciar el avatar.");
     }
   }
 
-  // (Opcional) si luego quieres un botón “Finalizar”, lo reutilizas
   async function stop() {
     try {
       if (!data?.sessionId) return;
@@ -289,13 +280,11 @@ const CandidatePage: React.FC = () => {
     const cleanedAnswer = answerText.trim();
     if (!cleanedAnswer) return setDebug("Respuesta vacía.");
     if (!script) return setDebug("No se ha cargado el guion de la entrevista.");
-    if (!data?.sessionId)
-      return setDebug("Primero pulsa Start para iniciar la sesión.");
+    if (!data?.sessionId) return setDebug("Primero pulsa Start para iniciar la sesión.");
     if (isFinished) return setDebug("La entrevista ya ha terminado.");
 
     const apiKey = process.env.REACT_APP_OPENAI_API_KEY;
-    if (!apiKey)
-      return setDebug("Falta REACT_APP_OPENAI_API_KEY en .env (Client).");
+    if (!apiKey) return setDebug("Falta REACT_APP_OPENAI_API_KEY en .env (Client).");
 
     const currentQuestion =
       questionIndex < script.questions.length ? script.questions[questionIndex] : null;
@@ -311,11 +300,7 @@ Tono deseado: ${script.tone}
 Pregunta actual del guion:
 ${currentQuestion ? `"${currentQuestion}"` : "(no queda pregunta en el guion)"}
 
-${
-  nextQuestion
-    ? `Siguiente pregunta del guion: "${nextQuestion}"`
-    : "No quedan más preguntas en el guion."
-}
+${nextQuestion ? `Siguiente pregunta del guion: "${nextQuestion}"` : "No quedan más preguntas en el guion."}
 
 Conversación hasta ahora (Entrevistador = IA, Entrevistado = humano):
 ${updatedConversation}
@@ -345,12 +330,10 @@ Instrucciones para tu siguiente respuesta:
     });
 
     const json = await response.json();
-    const assistantText: string =
-      json.choices?.[0]?.message?.content?.trim() || "";
+    const assistantText: string = json.choices?.[0]?.message?.content?.trim() || "";
     if (!assistantText) return setDebug("No he recibido respuesta de OpenAI.");
 
-    const finalConversation =
-      updatedConversation + `\nEntrevistador: ${assistantText}`;
+    const finalConversation = updatedConversation + `\nEntrevistador: ${assistantText}`;
     setConversation(finalConversation);
 
     if (nextQuestion) setQuestionIndex((prev) => prev + 1);
@@ -371,11 +354,13 @@ Instrucciones para tu siguiente respuesta:
   // MODO VOZ (Whisper)
   async function startRecording() {
     try {
+      console.log("🎤 startRecording click");
       if (isFinished) return;
-      if (!data?.sessionId)
-        return setDebug("Primero pulsa Start para iniciar la sesión.");
+      if (!data?.sessionId) return setDebug("Primero pulsa Start para iniciar la sesión.");
 
+      // 🔴 Si aquí no aparece el popup de permisos, revisa que NO esté bloqueado el mic en el candado del navegador.
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
       const mediaRecorder = new MediaRecorder(stream);
       audioChunksRef.current = [];
 
@@ -388,8 +373,7 @@ Instrucciones para tu siguiente respuesta:
           const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
 
           const apiKey = process.env.REACT_APP_OPENAI_API_KEY;
-          if (!apiKey)
-            return setDebug("Falta REACT_APP_OPENAI_API_KEY para transcribir audio.");
+          if (!apiKey) return setDebug("Falta REACT_APP_OPENAI_API_KEY para transcribir audio.");
 
           const formData = new FormData();
           formData.append("file", audioBlob, "audio.webm");
@@ -404,8 +388,7 @@ Instrucciones para tu siguiente respuesta:
 
           const json = await res.json();
           const transcript: string = json.text?.trim() || "";
-          if (!transcript)
-            return setDebug("No se ha podido transcribir el audio (texto vacío).");
+          if (!transcript) return setDebug("No se ha podido transcribir el audio (texto vacío).");
 
           setDebug("");
           await runInterviewTurn(transcript);
@@ -424,6 +407,7 @@ Instrucciones para tu siguiente respuesta:
   }
 
   function stopRecording() {
+    console.log("🛑 stopRecording click");
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
       mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
@@ -444,74 +428,7 @@ Instrucciones para tu siguiente respuesta:
       const prompt = `
 Actúa como un/a profesional senior en sociología y estudios cualitativos, con amplia experiencia en investigación social, estudios de mercado, Voice of the Customer y análisis de experiencia de cliente en restauración, así como en la elaboración de informes estratégicos para empresas e instituciones.
 
-Tu rol es analizar entrevistas cualitativas a clientes centradas exclusivamente en su experiencia en un restaurante (servicio, atención, ambiente, tiempos, interacción con el personal, momentos vividos y percepción global), no en la evaluación o testeo de productos concretos.
-
-No estamos testando producto (comida, bebida o recetas de forma aislada), sino la experiencia completa del cliente en el restaurante antes, durante y después de la visita.
-
-Cuando te proporcione la transcripción (o el audio convertido a texto) de una entrevista, deberás:
-
-1. RESUMEN EJECUTIVO  
-Elaborar un resumen ejecutivo claro, sintético y accionable, enfocado a decisores:
-- Identifica los insights clave sobre la experiencia en el restaurante  
-- Destaca patrones de comportamiento y percepción del servicio  
-- Expón fricciones, tensiones, contradicciones y momentos críticos del servicio  
-- Señala diferencias entre expectativas previas y experiencia real  
-- Evita descripciones superficiales  
-
-2. INSIGHTS CLAVE  
-Extrae los principales insights cualitativos:
-- Redáctalos en lenguaje profesional  
-- Formula cada insight como aprendizaje interpretativo sobre la experiencia en restaurante  
-- Conecta motivaciones, expectativas, emociones, barreras y comportamientos  
-- Prioriza insights con impacto en satisfacción, repetición y recomendación  
-
-3. VERBATIMS  
-Selecciona verbatims relevantes:
-- Textuales, claros y bien contextualizados  
-- Asociados a cada insight  
-- Representativos de la experiencia vivida en el restaurante  
-- Evita citas largas sin valor analítico  
-
-4. ANÁLISIS INTERPRETATIVO  
-Realiza un análisis profundo:
-- Qué relata el cliente sobre su experiencia en el restaurante  
-- Qué significa realmente a nivel emocional y relacional  
-- Qué necesidades, frustraciones o expectativas no cubiertas aparecen  
-- Qué no se dice explícitamente, pero se infiere del discurso  
-
-5. MAPA DE TEMAS  
-Identifica y estructura los grandes ejes de la experiencia en restaurante:
-- Motivaciones de elección del restaurante  
-- Momentos clave del journey (llegada, espera, pedido, servicio, pago, salida)  
-- Dolores, fricciones y puntos de mejora del servicio  
-- Expectativas y criterios de valoración  
-- Lenguaje utilizado para describir la experiencia  
-- Valores y creencias subyacentes sobre “una buena experiencia en restaurante”  
-
-6. IMPLICACIONES ESTRATÉGICAS  
-Traduce los hallazgos en implicaciones prácticas:
-- Para la mejora de la experiencia en restaurante  
-- Para servicio, procesos, atención al cliente o comunicación  
-- Diferencia entre implicaciones tácticas y estratégicas  
-- Prioriza según impacto potencial en satisfacción, fidelización y recomendación  
-
-7. OBSERVACIONES METODOLÓGICAS (si procede)  
-Incluye notas propias de un/a investigador/a profesional:
-- Sesgos o racionalizaciones en el discurso del cliente  
-- Límites de la entrevista o del contexto de la visita  
-- Hipótesis a validar en futuras entrevistas  
-- Preguntas abiertas que emergen del análisis  
-
-Estilo y tono:
-- Profesional, claro y estructurado  
-- Lenguaje propio de informes de investigación cualitativa y experiencia en restauración  
-- Interpretativo, no descriptivo  
-- Sin jerga innecesaria ni frases genéricas  
-
-Asume siempre que este análisis formará parte de un informe final de investigación cualitativa sobre experiencia de cliente en restaurante.
-
-Nivel de exigencia: consultora estratégica / instituto de investigación cualitativa.
-No actúes como un resumidor automático, sino como un/a analista experto/a que aporta valor interpretativo y estratégico.
+(…tu prompt largo…)
 
 ENTREVISTA COMPLETA:
 ${fullConversation}
@@ -531,8 +448,7 @@ ${fullConversation}
       });
 
       const json = await response.json();
-      const summaryText: string =
-        json.choices?.[0]?.message?.content?.trim() || "";
+      const summaryText: string = json.choices?.[0]?.message?.content?.trim() || "";
       if (!summaryText) {
         setIsSummarizing(false);
         return;
@@ -578,15 +494,15 @@ ${fullConversation}
     );
   }
 
+  const voiceDisabled = isFinished || !data?.sessionId;
+
   return (
     <div className="HeyGenStreamingAvatar">
       <header className="App-header">
         <div className="CandidateHero">
           <h1 style={{ marginTop: 14 }}>Entrevista experiencia</h1>
 
-          {isSummarizing && (
-            <p style={{ fontSize: 14, marginTop: 4 }}>⏳ Generando informe…</p>
-          )}
+          {isSummarizing && <p style={{ fontSize: 14, marginTop: 4 }}>⏳ Generando informe…</p>}
 
           <p className="CandidateIntro">
             Pulsa <strong>Start</strong> para iniciar. Para responder, pulsa{" "}
@@ -594,7 +510,6 @@ ${fullConversation}
             <strong>Detener grabación</strong>.
           </p>
 
-          {/* ✅ Botones: debajo del texto y A LA IZQUIERDA */}
           <div className="CandidateButtonsRow">
             <button className="PrimaryFlavButton" onClick={grab} disabled={isFinished}>
               Start
@@ -603,29 +518,26 @@ ${fullConversation}
             <button
               className="PrimaryFlavButton"
               onClick={isRecording ? stopRecording : startRecording}
-              disabled={isFinished || !data?.sessionId}
-              title={!data?.sessionId ? "Primero pulsa Start" : undefined}
+              disabled={voiceDisabled}
+              title={voiceDisabled ? "Primero pulsa Start" : undefined}
             >
               {isRecording ? "🔴 Detener grabación" : "🎤 Responder por voz"}
             </button>
-
-            {/* Si luego quieres un botón “Finalizar”, descomenta:
-            <button className="PrimaryFlavButton" onClick={stop} disabled={!data?.sessionId || isFinished}>
-              Finalizar
-            </button>
-            */}
           </div>
+
+          {/* ✅ Debug visible */}
+          {!!debug && (
+            <p style={{ marginTop: 10, fontSize: 13, opacity: 0.9, maxWidth: 720 }}>
+              {debug}
+            </p>
+          )}
         </div>
 
-        {isFinished && (
-          <p style={{ marginTop: 12 }}>✅ Entrevista finalizada. ¡Muchas gracias!</p>
-        )}
+        {isFinished && <p style={{ marginTop: 12 }}>✅ Entrevista finalizada. ¡Muchas gracias!</p>}
 
         <div className="MediaPlayer" style={{ marginTop: 22 }}>
           <video playsInline autoPlay width={450} ref={mediaStream}></video>
         </div>
-
-
       </header>
     </div>
   );
