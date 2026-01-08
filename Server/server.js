@@ -10,6 +10,15 @@ const express = require("express");
 const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
 
+// ✅ NEW: para subir audio (multipart/form-data)
+const multer = require("multer");
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 25 * 1024 * 1024, // 25MB
+  },
+});
+
 let OpenAI = null;
 try {
   OpenAI = require("openai");
@@ -195,6 +204,88 @@ app.get("/api/debug/db", async (_req, res) => {
   }
 });
 
+// =====================================================
+// ✅ NEW: OpenAI server-side endpoints (para producción)
+// =====================================================
+
+function requireOpenAI(res) {
+  if (!OpenAI) {
+    res.status(500).json({ error: "Falta paquete openai (npm i openai)" });
+    return null;
+  }
+  if (!process.env.OPENAI_API_KEY) {
+    res.status(500).json({ error: "Falta OPENAI_API_KEY en variables de entorno (Render)" });
+    return null;
+  }
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+}
+
+// 1) Chat completions (para CandidatePage / summary)
+app.post("/api/openai/chat", async (req, res) => {
+  try {
+    const openai = requireOpenAI(res);
+    if (!openai) return;
+
+    const { messages, model, temperature } = req.body || {};
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: "Faltan messages[]" });
+    }
+
+    const completion = await openai.chat.completions.create({
+      model: String(model || "gpt-4.1-mini"),
+      messages,
+      temperature: typeof temperature === "number" ? temperature : 0.4,
+    });
+
+    const text = completion?.choices?.[0]?.message?.content?.trim() || "";
+    if (!text) return res.status(500).json({ error: "OpenAI devolvió respuesta vacía" });
+
+    res.json({ ok: true, text });
+  } catch (e) {
+    console.error("❌ /api/openai/chat:", e);
+    res.status(500).json({ error: "Error en /api/openai/chat" });
+  }
+});
+
+// 2) Transcripción (Whisper) - recibe multipart/form-data con "file"
+app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
+  try {
+    const openai = requireOpenAI(res);
+    if (!openai) return;
+
+    const file = req.file;
+    if (!file || !file.buffer) {
+      return res.status(400).json({ error: "Falta archivo (field: file)" });
+    }
+
+    // acepta parámetros opcionales
+    const model = String(req.body?.model || "whisper-1");
+    const language = String(req.body?.language || "es");
+
+    // Node: convertimos buffer -> File (compatible con SDK)
+    const filename = file.originalname || "audio.webm";
+    const contentType = file.mimetype || "audio/webm";
+
+    // File está disponible en Node 18+ (Render usa Node 22 en tus logs)
+    const audioFile = new File([file.buffer], filename, { type: contentType });
+
+    const transcription = await openai.audio.transcriptions.create({
+      file: audioFile,
+      model,
+      language,
+    });
+
+    const text = String(transcription?.text || "").trim();
+    if (!text) return res.status(500).json({ error: "Transcripción vacía" });
+
+    res.json({ ok: true, text });
+  } catch (e) {
+    console.error("❌ /api/openai/transcribe:", e);
+    res.status(500).json({ error: "Error en /api/openai/transcribe" });
+  }
+});
+
 // ===============================
 // ✅ ENDPOINTS PUBLICOS PARA CONFIG DE ENTREVISTA
 // ===============================
@@ -313,9 +404,7 @@ Reglas:
 `.trim();
 
 function buildGroupPrompt(group, blocks) {
-  const restaurantLabel = group.restaurantName
-    ? `Restaurante: ${group.restaurantName}`
-    : `Grupo: ${group.groupId}`;
+  const restaurantLabel = group.restaurantName ? `Restaurante: ${group.restaurantName}` : `Grupo: ${group.groupId}`;
 
   return `
 ${restaurantLabel}
