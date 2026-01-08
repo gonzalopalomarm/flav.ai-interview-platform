@@ -11,6 +11,9 @@ import "../App.css";
 
 const API_BASE = process.env.REACT_APP_API_BASE_URL || "http://localhost:3001";
 
+// ✅ Solución A: en producción no mostramos mensajes internos al candidato
+const IS_PROD = process.env.NODE_ENV === "production";
+
 type StoredConfig = {
   objective: string;
   tone: string;
@@ -42,7 +45,11 @@ Reglas:
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // POST seguro al backend para guardar summary
-async function saveSummaryToBackend(interviewId: string, summary: string, rawConversation?: string) {
+async function saveSummaryToBackend(
+  interviewId: string,
+  summary: string,
+  rawConversation?: string
+) {
   const res = await fetch(`${API_BASE}/api/save-summary`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -62,7 +69,9 @@ function isValidConfig(cfg: any): cfg is StoredConfig {
     typeof cfg.tone === "string" &&
     Array.isArray(cfg.questions) &&
     cfg.questions.length > 0 &&
-    cfg.questions.every((q: any) => typeof q === "string" && q.trim().length > 0) &&
+    cfg.questions.every(
+      (q: any) => typeof q === "string" && q.trim().length > 0
+    ) &&
     typeof cfg.avatarId === "string" &&
     cfg.avatarId.trim().length > 0 &&
     typeof cfg.voiceId === "string" &&
@@ -110,18 +119,24 @@ const CandidatePage: React.FC = () => {
 
         if (!interviewToken) {
           if (cancelled) return;
-          setConfigError("Falta el identificador de entrevista en la URL. Pide un nuevo enlace al equipo.");
+          setConfigError(
+            "Falta el identificador de entrevista en la URL. Pide un nuevo enlace al equipo."
+          );
           setIsLoadingConfig(false);
           return;
         }
 
-        const url = `${API_BASE}/api/interview-config/${encodeURIComponent(interviewToken)}`;
+        const url = `${API_BASE}/api/interview-config/${encodeURIComponent(
+          interviewToken
+        )}`;
         const res = await fetch(url);
         const json = await res.json().catch(() => ({}));
 
         if (!res.ok) {
           if (cancelled) return;
-          setConfigError(json?.error || `No se pudo cargar config (HTTP ${res.status})`);
+          setConfigError(
+            json?.error || `No se pudo cargar config (HTTP ${res.status})`
+          );
           setDebug(`(Debug) GET ${url} → ${JSON.stringify(json)}`);
           setIsLoadingConfig(false);
           return;
@@ -162,8 +177,10 @@ const CandidatePage: React.FC = () => {
 
   // Inicialización avatar (HeyGen)
   useEffect(() => {
-    const startTalkCallback = (e: any) => console.log("Avatar started talking", e);
-    const stopTalkCallback = (e: any) => console.log("Avatar stopped talking", e);
+    const startTalkCallback = (e: any) =>
+      console.log("Avatar started talking", e);
+    const stopTalkCallback = (e: any) =>
+      console.log("Avatar stopped talking", e);
 
     if (!avatar.current) {
       const heygenKey = process.env.REACT_APP_HEYGEN_API_KEY;
@@ -172,15 +189,23 @@ const CandidatePage: React.FC = () => {
         return;
       }
 
-      avatar.current = new StreamingAvatarApi(new Configuration({ accessToken: heygenKey }));
+      avatar.current = new StreamingAvatarApi(
+        new Configuration({ accessToken: heygenKey })
+      );
       avatar.current.addEventHandler("avatar_start_talking", startTalkCallback);
       avatar.current.addEventHandler("avatar_stop_talking", stopTalkCallback);
     }
 
     return () => {
       if (avatar.current) {
-        avatar.current.removeEventHandler("avatar_start_talking", startTalkCallback);
-        avatar.current.removeEventHandler("avatar_stop_talking", stopTalkCallback);
+        avatar.current.removeEventHandler(
+          "avatar_start_talking",
+          startTalkCallback
+        );
+        avatar.current.removeEventHandler(
+          "avatar_stop_talking",
+          stopTalkCallback
+        );
       }
     };
   }, []);
@@ -189,15 +214,20 @@ const CandidatePage: React.FC = () => {
   async function grab() {
     try {
       if (!script) return setDebug("No se ha cargado el guion de la entrevista.");
-      if (isRecording) return setDebug("Primero detén la grabación antes de iniciar de nuevo.");
+      if (isRecording)
+        return setDebug("Primero detén la grabación antes de iniciar de nuevo.");
 
       if (!avatar.current) {
         const heygenKey = process.env.REACT_APP_HEYGEN_API_KEY;
-        if (!heygenKey) return setDebug("Falta REACT_APP_HEYGEN_API_KEY en el .env de Client.");
-        avatar.current = new StreamingAvatarApi(new Configuration({ accessToken: heygenKey }));
+        if (!heygenKey)
+          return setDebug("Falta REACT_APP_HEYGEN_API_KEY en el .env de Client.");
+        avatar.current = new StreamingAvatarApi(
+          new Configuration({ accessToken: heygenKey })
+        );
       }
 
-      if (!avatarId || !voiceId) return setDebug("Hay un problema con la configuración del avatar.");
+      if (!avatarId || !voiceId)
+        return setDebug("Hay un problema con la configuración del avatar.");
 
       setIsFinished(false);
       setConversation("");
@@ -222,7 +252,8 @@ const CandidatePage: React.FC = () => {
 
       const firstQuestion = script.questions[0];
       const opening =
-        "Hola, gracias por tu tiempo. Vamos a comenzar la entrevista. " + (firstQuestion || "");
+        "Hola, gracias por tu tiempo. Vamos a comenzar la entrevista. " +
+        (firstQuestion || "");
 
       const initialConversation = `Entrevistador: ${opening}`;
       setConversation(initialConversation);
@@ -235,8 +266,13 @@ const CandidatePage: React.FC = () => {
           taskRequest: { text: opening, sessionId: res.sessionId },
         });
       } catch (e: any) {
-        console.warn("⚠️ HeyGen speak inicial falló (no bloqueamos la sesión):", e);
-        setDebug("⚠️ El avatar se ha iniciado, pero el primer mensaje falló. Pulsa Start otra vez si no habla.");
+        console.warn(
+          "⚠️ HeyGen speak inicial falló (no bloqueamos la sesión):",
+          e
+        );
+        setDebug(
+          "⚠️ El avatar se ha iniciado, pero el primer mensaje falló. Pulsa Start otra vez si no habla."
+        );
       }
     } catch (err: any) {
       console.error("Error al iniciar avatar:", err);
@@ -280,16 +316,22 @@ const CandidatePage: React.FC = () => {
     const cleanedAnswer = answerText.trim();
     if (!cleanedAnswer) return setDebug("Respuesta vacía.");
     if (!script) return setDebug("No se ha cargado el guion de la entrevista.");
-    if (!data?.sessionId) return setDebug("Primero pulsa Start para iniciar la sesión.");
+    if (!data?.sessionId)
+      return setDebug("Primero pulsa Start para iniciar la sesión.");
     if (isFinished) return setDebug("La entrevista ya ha terminado.");
 
     const apiKey = process.env.REACT_APP_OPENAI_API_KEY;
-    if (!apiKey) return setDebug("Falta REACT_APP_OPENAI_API_KEY en .env (Client).");
+    if (!apiKey)
+      return setDebug("Falta REACT_APP_OPENAI_API_KEY en .env (Client).");
 
     const currentQuestion =
-      questionIndex < script.questions.length ? script.questions[questionIndex] : null;
+      questionIndex < script.questions.length
+        ? script.questions[questionIndex]
+        : null;
     const nextQuestion =
-      questionIndex + 1 < script.questions.length ? script.questions[questionIndex + 1] : null;
+      questionIndex + 1 < script.questions.length
+        ? script.questions[questionIndex + 1]
+        : null;
 
     const updatedConversation = conversation + `\nEntrevistado: ${cleanedAnswer}`;
 
@@ -300,7 +342,11 @@ Tono deseado: ${script.tone}
 Pregunta actual del guion:
 ${currentQuestion ? `"${currentQuestion}"` : "(no queda pregunta en el guion)"}
 
-${nextQuestion ? `Siguiente pregunta del guion: "${nextQuestion}"` : "No quedan más preguntas en el guion."}
+${
+  nextQuestion
+    ? `Siguiente pregunta del guion: "${nextQuestion}"`
+    : "No quedan más preguntas en el guion."
+}
 
 Conversación hasta ahora (Entrevistador = IA, Entrevistado = humano):
 ${updatedConversation}
@@ -330,10 +376,12 @@ Instrucciones para tu siguiente respuesta:
     });
 
     const json = await response.json();
-    const assistantText: string = json.choices?.[0]?.message?.content?.trim() || "";
+    const assistantText: string =
+      json.choices?.[0]?.message?.content?.trim() || "";
     if (!assistantText) return setDebug("No he recibido respuesta de OpenAI.");
 
-    const finalConversation = updatedConversation + `\nEntrevistador: ${assistantText}`;
+    const finalConversation =
+      updatedConversation + `\nEntrevistador: ${assistantText}`;
     setConversation(finalConversation);
 
     if (nextQuestion) setQuestionIndex((prev) => prev + 1);
@@ -356,9 +404,9 @@ Instrucciones para tu siguiente respuesta:
     try {
       console.log("🎤 startRecording click");
       if (isFinished) return;
-      if (!data?.sessionId) return setDebug("Primero pulsa Start para iniciar la sesión.");
+      if (!data?.sessionId)
+        return setDebug("Primero pulsa Start para iniciar la sesión.");
 
-      // 🔴 Si aquí no aparece el popup de permisos, revisa que NO esté bloqueado el mic en el candado del navegador.
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
       const mediaRecorder = new MediaRecorder(stream);
@@ -370,10 +418,13 @@ Instrucciones para tu siguiente respuesta:
 
       mediaRecorder.onstop = async () => {
         try {
-          const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+          const audioBlob = new Blob(audioChunksRef.current, {
+            type: "audio/webm",
+          });
 
           const apiKey = process.env.REACT_APP_OPENAI_API_KEY;
-          if (!apiKey) return setDebug("Falta REACT_APP_OPENAI_API_KEY para transcribir audio.");
+          if (!apiKey)
+            return setDebug("Falta REACT_APP_OPENAI_API_KEY para transcribir audio.");
 
           const formData = new FormData();
           formData.append("file", audioBlob, "audio.webm");
@@ -388,7 +439,8 @@ Instrucciones para tu siguiente respuesta:
 
           const json = await res.json();
           const transcript: string = json.text?.trim() || "";
-          if (!transcript) return setDebug("No se ha podido transcribir el audio (texto vacío).");
+          if (!transcript)
+            return setDebug("No se ha podido transcribir el audio (texto vacío).");
 
           setDebug("");
           await runInterviewTurn(transcript);
@@ -511,7 +563,6 @@ Asume que este informe será utilizado para tomar decisiones estratégicas sobre
 Nivel de exigencia: consultora estratégica / instituto de investigación cualitativa.
 No actúes como un resumidor automático, sino como un/a analista experto/a que sintetiza y aporta visión estratégica.
 
-
 ENTREVISTA COMPLETA:
 ${fullConversation}
 `.trim();
@@ -530,7 +581,8 @@ ${fullConversation}
       });
 
       const json = await response.json();
-      const summaryText: string = json.choices?.[0]?.message?.content?.trim() || "";
+      const summaryText: string =
+        json.choices?.[0]?.message?.content?.trim() || "";
       if (!summaryText) {
         setIsSummarizing(false);
         return;
@@ -607,8 +659,8 @@ ${fullConversation}
             </button>
           </div>
 
-          {/* ✅ Debug visible */}
-          {!!debug && (
+          {/* ✅ Debug: solo visible en local / dev. En producción NO se muestra */}
+          {!IS_PROD && !!debug && (
             <p style={{ marginTop: 10, fontSize: 13, opacity: 0.9, maxWidth: 720 }}>
               {debug}
             </p>
