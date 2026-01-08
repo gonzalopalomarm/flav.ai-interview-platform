@@ -426,9 +426,91 @@ Instrucciones para tu siguiente respuesta:
       setIsSummarizing(true);
 
       const prompt = `
-Actúa como un/a profesional senior en sociología y estudios cualitativos, con amplia experiencia en investigación social, estudios de mercado, Voice of the Customer y análisis de experiencia de cliente en restauración, así como en la elaboración de informes estratégicos para empresas e instituciones.
+Actúa como un/a profesional senior en sociología y estudios cualitativos, con amplia experiencia en investigación cualitativa, Voice of the Customer y análisis de experiencia de cliente en restauración, así como en la elaboración de informes estratégicos para empresas e instituciones.
 
-(…tu prompt largo…)
+Tu rol es elaborar un INFORME GLOBAL de investigación cualitativa a partir de múltiples entrevistas individuales a clientes, centradas exclusivamente en su experiencia en un restaurante (servicio, atención, ambiente, tiempos, interacción con el personal y percepción global).
+
+No estamos testando producto (comida o bebida de forma aislada), sino la experiencia completa del cliente en el restaurante.
+
+Asume que:
+- Cada entrevista ya ha sido analizada individualmente
+- Tu tarea es realizar una síntesis transversal del conjunto
+- Debes identificar patrones comunes, diferencias relevantes y tensiones entre discursos
+
+Cuando te proporcione el conjunto de entrevistas (o sus análisis individuales), deberás:
+
+1. RESUMEN EJECUTIVO GLOBAL  
+Elaborar un resumen ejecutivo claro y accionable, orientado a decisores:
+- Principales aprendizajes globales sobre la experiencia en restaurante  
+- Qué funciona de forma consistente y qué genera fricción  
+- Tensiones y contradicciones entre perfiles de clientes  
+- Insight clave que mejor explica la experiencia global  
+
+2. GRANDES INSIGHTS TRANSVERSALES  
+Identifica los insights cualitativos más relevantes:
+- Deben surgir de la repetición, recurrencia o fuerza del discurso  
+- Indica si cada insight es mayoritario, recurrente o puntual pero significativo  
+- Redáctalos como aprendizajes interpretativos, no como opiniones literales  
+- Conecta emociones, expectativas, comportamientos y decisiones  
+
+3. VERBATIMS REPRESENTATIVOS  
+Incluye verbatims seleccionados:
+- Representativos del conjunto de entrevistas  
+- Asociados claramente a cada insight  
+- Indicando, cuando aporte valor, si reflejan una opinión compartida o una tensión  
+- Evita verbatims aislados sin respaldo analítico  
+
+4. MAPA GLOBAL DE LA EXPERIENCIA EN RESTAURANTE  
+Construye una visión integrada del customer journey:
+- Antes de la visita  
+- Llegada y primera impresión  
+- Servicio y atención  
+- Gestión del tiempo y esperas  
+- Pago y cierre  
+- Recuerdo y predisposición a volver o recomendar  
+
+Para cada etapa:
+- Qué funciona  
+- Qué falla  
+- Qué genera emoción positiva o negativa  
+
+5. DIFERENCIAS Y TENSIONES ENTRE CLIENTES  
+Identifica diferencias relevantes en la experiencia:
+- Expectativas vs. realidad  
+- Clientes habituales vs. nuevos  
+- Sensibilidad al servicio, al tiempo o al trato  
+- Momentos donde no hay consenso  
+
+6. IMPLICACIONES ESTRATÉGICAS PRIORITARIAS  
+Traduce los hallazgos en implicaciones claras:
+- Para la mejora de la experiencia en restaurante  
+- Para operaciones, personal de sala, procesos o comunicación  
+- Distingue entre quick wins y cambios estructurales  
+- Prioriza según impacto potencial en satisfacción, fidelización y recomendación  
+
+7. APRENDIZAJES CLAVE PARA DECISIÓN  
+Resume:
+- 3–5 aprendizajes que un decisor debe recordar  
+- Qué no se debería ignorar  
+- Qué oportunidad clara emerge del conjunto  
+
+8. OBSERVACIONES METODOLÓGICAS  
+Incluye notas propias de investigación cualitativa:
+- Saturación de discursos detectada o no  
+- Límites del estudio  
+- Hipótesis emergentes a validar cuantitativamente  
+- Nuevas preguntas que surgen del análisis global  
+
+Estilo y tono:
+- Profesional, claro y estructurado  
+- Propio de informes de investigación cualitativa de alto nivel  
+- Interpretativo y sintético  
+- Sin jerga innecesaria ni frases genéricas  
+
+Asume que este informe será utilizado para tomar decisiones estratégicas sobre la experiencia en restaurante.
+Nivel de exigencia: consultora estratégica / instituto de investigación cualitativa.
+No actúes como un resumidor automático, sino como un/a analista experto/a que sintetiza y aporta visión estratégica.
+
 
 ENTREVISTA COMPLETA:
 ${fullConversation}
