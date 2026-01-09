@@ -1,4 +1,4 @@
-// src/pages/CandidatePage.tsx
+// Client/src/pages/CandidatePage.tsx
 import React, { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
@@ -11,7 +11,7 @@ import "../App.css";
 
 const API_BASE = process.env.REACT_APP_API_BASE_URL || "http://localhost:3001";
 
-// ✅ Solución A (limpia): en producción no mostramos mensajes internos al candidato
+// ✅ Solución A: en producción NO mostramos debug al candidato
 const IS_PROD = process.env.NODE_ENV === "production";
 
 type StoredConfig = {
@@ -45,11 +45,7 @@ Reglas:
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // POST seguro al backend para guardar summary
-async function saveSummaryToBackend(
-  interviewId: string,
-  summary: string,
-  rawConversation?: string
-) {
+async function saveSummaryToBackend(interviewId: string, summary: string, rawConversation?: string) {
   const res = await fetch(`${API_BASE}/api/save-summary`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -105,10 +101,29 @@ const CandidatePage: React.FC = () => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
-  // ✅ helper: debug solo en dev (no candidato en prod)
-  const setDebugSafe = (msg: string) => {
-    if (!IS_PROD) setDebug(msg);
-  };
+  // =====================================================
+  // ✅ 0) PROXY HeyGen (arregla CORS del SDK sin reescribirlo)
+  // =====================================================
+  useEffect(() => {
+    const originalFetch = window.fetch.bind(window);
+
+    window.fetch = async (input: any, init?: any) => {
+      try {
+        if (typeof input === "string" && input.startsWith("https://api.heygen.com/")) {
+          // https://api.heygen.com/v1/xxx  ->  {API_BASE}/api/heygen/v1/xxx
+          const proxied = `${API_BASE}/api/heygen${input.replace("https://api.heygen.com", "")}`;
+          return originalFetch(proxied, init);
+        }
+        return originalFetch(input, init);
+      } catch (e) {
+        return originalFetch(input, init);
+      }
+    };
+
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, []);
 
   // ✅ SOLO BACKEND (sin localStorage)
   useEffect(() => {
@@ -122,9 +137,7 @@ const CandidatePage: React.FC = () => {
 
         if (!interviewToken) {
           if (cancelled) return;
-          setConfigError(
-            "Falta el identificador de entrevista en la URL. Pide un nuevo enlace al equipo."
-          );
+          setConfigError("Falta el identificador de entrevista en la URL. Pide un nuevo enlace al equipo.");
           setIsLoadingConfig(false);
           return;
         }
@@ -136,7 +149,7 @@ const CandidatePage: React.FC = () => {
         if (!res.ok) {
           if (cancelled) return;
           setConfigError(json?.error || `No se pudo cargar config (HTTP ${res.status})`);
-          setDebugSafe(`(Debug) GET ${url} → ${JSON.stringify(json)}`);
+          setDebug(`(Debug) GET ${url} → ${JSON.stringify(json)}`);
           setIsLoadingConfig(false);
           return;
         }
@@ -144,7 +157,7 @@ const CandidatePage: React.FC = () => {
         if (!isValidConfig(json?.config)) {
           if (cancelled) return;
           setConfigError("Config inválida devuelta por el backend.");
-          setDebugSafe(`(Debug) GET ${url} → ${JSON.stringify(json)}`);
+          setDebug(`(Debug) GET ${url} → ${JSON.stringify(json)}`);
           setIsLoadingConfig(false);
           return;
         }
@@ -186,9 +199,7 @@ const CandidatePage: React.FC = () => {
         return;
       }
 
-      avatar.current = new StreamingAvatarApi(
-        new Configuration({ accessToken: heygenKey })
-      );
+      avatar.current = new StreamingAvatarApi(new Configuration({ accessToken: heygenKey }));
       avatar.current.addEventHandler("avatar_start_talking", startTalkCallback);
       avatar.current.addEventHandler("avatar_stop_talking", stopTalkCallback);
     }
@@ -201,26 +212,25 @@ const CandidatePage: React.FC = () => {
     };
   }, []);
 
-  // ✅ Start robusto (no romper si falla el primer speak)
+  // ✅ Start robusto
   async function grab() {
     try {
-      if (!script) return setDebugSafe("No se ha cargado el guion de la entrevista.");
-      if (isRecording) return setDebugSafe("Primero detén la grabación antes de iniciar de nuevo.");
+      if (!script) return setDebug("No se ha cargado el guion de la entrevista.");
+      if (isRecording) return setDebug("Primero detén la grabación antes de iniciar de nuevo.");
 
       if (!avatar.current) {
         const heygenKey = process.env.REACT_APP_HEYGEN_API_KEY;
-        if (!heygenKey) return setDebugSafe("Falta REACT_APP_HEYGEN_API_KEY en el .env de Client.");
+        if (!heygenKey) return setDebug("Falta REACT_APP_HEYGEN_API_KEY en el .env de Client.");
         avatar.current = new StreamingAvatarApi(new Configuration({ accessToken: heygenKey }));
       }
 
-      if (!avatarId || !voiceId) return setDebugSafe("Hay un problema con la configuración del avatar.");
+      if (!avatarId || !voiceId) return setDebug("Hay un problema con la configuración del avatar.");
 
       setIsFinished(false);
       setConversation("");
       setQuestionIndex(0);
       setDebug("");
 
-      // 1) Crear sesión
       const res = await avatar.current!.createStartAvatar(
         {
           newSessionRequest: {
@@ -229,60 +239,29 @@ const CandidatePage: React.FC = () => {
             voice: { voiceId },
           },
         },
-        (msg: string) => {
-          // logs solo consola (no candidato)
-          console.log("HeyGen debug:", msg);
-        }
+        (msg: string) => console.log("HeyGen debug:", msg)
       );
 
-      // ✅ Guardamos sesión SIEMPRE si se creó
       setData(res);
       setStream(avatar.current!.mediaStream);
 
       const firstQuestion = script.questions[0];
-      const opening =
-        "Hola, gracias por tu tiempo. Vamos a comenzar la entrevista. " +
-        (firstQuestion || "");
+      const opening = "Hola, gracias por tu tiempo. Vamos a comenzar la entrevista. " + (firstQuestion || "");
+      setConversation(`Entrevistador: ${opening}`);
 
-      const initialConversation = `Entrevistador: ${opening}`;
-      setConversation(initialConversation);
-
-      // 2) Hablar (con delay + retry). Si falla, NO rompemos la sesión.
+      // Hablar (con delay). Si falla, no rompemos.
       try {
         await sleep(600);
-
         await avatar.current!.speak({
           taskRequest: { text: opening, sessionId: res.sessionId },
         });
       } catch (e: any) {
         console.warn("⚠️ HeyGen speak inicial falló (no bloqueamos la sesión):", e);
-        setDebugSafe("⚠️ El avatar se ha iniciado, pero el primer mensaje falló. Pulsa Start otra vez si no habla.");
+        setDebug("⚠️ El avatar se ha iniciado, pero el primer mensaje falló. Pulsa Start otra vez si no habla.");
       }
     } catch (err: any) {
       console.error("Error al iniciar avatar:", err);
-      setDebugSafe("Ha ocurrido un problema al iniciar el avatar.");
-    }
-  }
-
-  async function stop() {
-    try {
-      if (!data?.sessionId) return;
-
-      await avatar.current?.stopAvatar(
-        { stopSessionRequest: { sessionId: data.sessionId } },
-        (msg: string) => console.log("Stop debug:", msg)
-      );
-
-      setIsFinished(true);
-
-      if (interviewToken && conversation.trim()) {
-        handleGenerateSummary(interviewToken, conversation).catch((e) =>
-          console.error("Error generando resumen al parar:", e)
-        );
-      }
-    } catch (err: any) {
-      console.error("Error al detener avatar:", err);
-      setDebugSafe("Ha ocurrido un problema al detener el avatar.");
+      setDebug("Ha ocurrido un problema al iniciar el avatar.");
     }
   }
 
@@ -296,13 +275,31 @@ const CandidatePage: React.FC = () => {
     }
   }, [stream]);
 
-  // ✅ OpenAI chat via BACKEND
+  // ✅ OpenAI via BACKEND
+  async function openaiChat(messages: any[], opts?: { model?: string; temperature?: number }) {
+    const res = await fetch(`${API_BASE}/api/openai/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages,
+        model: opts?.model || "gpt-4.1-mini",
+        temperature: typeof opts?.temperature === "number" ? opts.temperature : 0.4,
+      }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(json?.detail || json?.error || `OpenAI chat error (HTTP ${res.status})`);
+    }
+    return String(json?.text || "").trim();
+  }
+
   async function runInterviewTurn(answerText: string) {
     const cleanedAnswer = answerText.trim();
-    if (!cleanedAnswer) return setDebugSafe("Respuesta vacía.");
-    if (!script) return setDebugSafe("No se ha cargado el guion de la entrevista.");
-    if (!data?.sessionId) return setDebugSafe("Primero pulsa Start para iniciar la sesión.");
-    if (isFinished) return setDebugSafe("La entrevista ya ha terminado.");
+    if (!cleanedAnswer) return setDebug("Respuesta vacía.");
+    if (!script) return setDebug("No se ha cargado el guion de la entrevista.");
+    if (!data?.sessionId) return setDebug("Primero pulsa Start para iniciar la sesión.");
+    if (isFinished) return setDebug("La entrevista ya ha terminado.");
 
     const currentQuestion =
       questionIndex < script.questions.length ? script.questions[questionIndex] : null;
@@ -332,55 +329,51 @@ Instrucciones para tu siguiente respuesta:
 - Mantén un tono cercano, humano y profesional.
 `.trim();
 
-    const response = await fetch(`${API_BASE}/api/openai/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.4,
-      }),
-    });
+    const assistantText = await openaiChat(
+      [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userPrompt },
+      ],
+      { model: "gpt-4.1-mini", temperature: 0.4 }
+    );
 
-    const json = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      return setDebugSafe(json?.error || "Error en /api/openai/chat");
-    }
-
-    const assistantText: string = String(json?.text || "").trim();
-    if (!assistantText) return setDebugSafe("OpenAI devolvió respuesta vacía.");
+    if (!assistantText) return setDebug("No he recibido respuesta del backend OpenAI.");
 
     const finalConversation = updatedConversation + `\nEntrevistador: ${assistantText}`;
     setConversation(finalConversation);
 
     if (nextQuestion) setQuestionIndex((prev) => prev + 1);
-    else {
-      setIsFinished(true);
-      if (interviewToken) {
-        handleGenerateSummary(interviewToken, finalConversation).catch((e) =>
-          console.error("Error generando resumen automático:", e)
-        );
-      }
-    }
+    else setIsFinished(true);
 
-    try {
-      await avatar.current?.speak({
-        taskRequest: { text: assistantText, sessionId: data.sessionId },
-      });
-    } catch (e) {
-      console.warn("⚠️ HeyGen speak falló:", e);
-      setDebugSafe("⚠️ No se pudo reproducir la respuesta del avatar. Intenta de nuevo.");
-    }
+    await avatar.current?.speak({
+      taskRequest: { text: assistantText, sessionId: data.sessionId },
+    });
   }
 
   // ✅ Whisper via BACKEND
+  async function transcribeOnBackend(audioBlob: Blob) {
+    const formData = new FormData();
+    formData.append("file", audioBlob, "audio.webm");
+    formData.append("model", "whisper-1");
+    formData.append("language", "es");
+
+    const res = await fetch(`${API_BASE}/api/openai/transcribe`, {
+      method: "POST",
+      body: formData,
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(json?.detail || json?.error || `Transcribe error (HTTP ${res.status})`);
+    }
+
+    return String(json?.text || "").trim();
+  }
+
   async function startRecording() {
     try {
       if (isFinished) return;
-      if (!data?.sessionId) return setDebugSafe("Primero pulsa Start para iniciar la sesión.");
+      if (!data?.sessionId) return setDebug("Primero pulsa Start para iniciar la sesión.");
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
@@ -393,36 +386,22 @@ Instrucciones para tu siguiente respuesta:
       mediaRecorder.onstop = async () => {
         try {
           const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+          const transcript = await transcribeOnBackend(audioBlob);
+          if (!transcript) return setDebug("No se ha podido transcribir el audio (texto vacío).");
 
-          const formData = new FormData();
-          formData.append("file", audioBlob, "audio.webm");
-          formData.append("model", "whisper-1");
-          formData.append("language", "es");
-
-          const res = await fetch(`${API_BASE}/api/openai/transcribe`, {
-            method: "POST",
-            body: formData,
-          });
-
-          const json = await res.json().catch(() => ({}));
-          if (!res.ok) return setDebugSafe(json?.error || "Error en /api/openai/transcribe");
-
-          const transcript: string = String(json?.text || "").trim();
-          if (!transcript) return setDebugSafe("No se ha podido transcribir el audio (texto vacío).");
-
-          setDebugSafe("");
+          setDebug("");
           await runInterviewTurn(transcript);
         } catch (e: any) {
-          setDebugSafe(e?.message || "Error procesando/transcribiendo el audio");
+          setDebug(e?.message || "Error transcribiendo audio");
         }
       };
 
       mediaRecorderRef.current = mediaRecorder;
       mediaRecorder.start();
       setIsRecording(true);
-      setDebugSafe("Grabando… Cuando termines, pulsa ‘Detener grabación’.");
+      setDebug("Grabando… Cuando termines, pulsa ‘Detener grabación’.");
     } catch (e: any) {
-      setDebugSafe(e?.message || "Error iniciando grabación de audio");
+      setDebug(e?.message || "Error iniciando grabación de audio");
     }
   }
 
@@ -431,71 +410,7 @@ Instrucciones para tu siguiente respuesta:
       mediaRecorderRef.current.stop();
       mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
       setIsRecording(false);
-      setDebugSafe("Procesando audio…");
-    }
-  }
-
-  // ✅ Summary via BACKEND
-  async function handleGenerateSummary(interviewId: string, fullConversation: string) {
-    try {
-      if (!fullConversation.trim()) return;
-
-      setIsSummarizing(true);
-
-      // ⚠️ Este prompt es para resumen INDIVIDUAL. Ajusta aquí el formato profesional que quieres.
-      const prompt = `
-Actúa como un/a profesional senior en sociología y estudios cualitativos, con amplia experiencia en investigación social, estudios de mercado, Voice of the Customer y análisis de experiencia de cliente en restauración, así como en la elaboración de informes estratégicos para empresas e instituciones.
-
-Tu rol es analizar UNA entrevista cualitativa a un cliente centrada exclusivamente en su experiencia en un restaurante (servicio, atención, ambiente, tiempos, interacción con el personal, momentos vividos y percepción global), no en la evaluación o testeo de productos concretos.
-
-No estamos testando producto (comida, bebida o recetas de forma aislada), sino la experiencia completa del cliente en el restaurante antes, durante y después de la visita.
-
-Devuelve un informe estructurado y profesional con:
-1) Resumen ejecutivo (3-5 bullets)
-2) Insights clave (6-10 bullets con titular + explicación)
-3) Verbatims (5-8 citas cortas)
-4) Momentos del journey (llegada, espera, servicio, pago, salida)
-5) Recomendaciones priorizadas (quick wins vs estructurales)
-
-ENTREVISTA COMPLETA:
-${fullConversation}
-`.trim();
-
-      const response = await fetch(`${API_BASE}/api/openai/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "gpt-4.1-mini",
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.4,
-        }),
-      });
-
-      const json = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        setIsSummarizing(false);
-        return setDebugSafe(json?.error || "Error en /api/openai/chat (summary)");
-      }
-
-      const summaryText: string = String(json?.text || "").trim();
-      if (!summaryText) {
-        setIsSummarizing(false);
-        return;
-      }
-
-      await saveSummaryToBackend(interviewId, summaryText, fullConversation);
-
-      // ✅ Mensaje final: en prod NO mostramos texto interno, solo cierre simple
-      if (IS_PROD) {
-        setDebug("");
-      } else {
-        setDebug("✅ Entrevista finalizada. Summary guardado.");
-      }
-
-      setIsSummarizing(false);
-    } catch (e: any) {
-      setDebugSafe(e?.message || "Error generando o guardando el resumen");
-      setIsSummarizing(false);
+      setDebug("Procesando audio…");
     }
   }
 
@@ -519,9 +434,7 @@ ${fullConversation}
 
           <h1>❌ Problema con el enlace</h1>
           <p style={{ maxWidth: 600 }}>{configError}</p>
-
-          {/* Debug solo en dev */}
-          {!IS_PROD && !!debug && (
+          {!!debug && !IS_PROD && (
             <p style={{ marginTop: 12, fontSize: 11, opacity: 0.5 }}>
               (Detalle técnico: {debug})
             </p>
@@ -538,10 +451,6 @@ ${fullConversation}
       <header className="App-header">
         <div className="CandidateHero">
           <h1 style={{ marginTop: 14 }}>Entrevista experiencia</h1>
-
-          {isSummarizing && (
-            <p style={{ fontSize: 14, marginTop: 4 }}>⏳ Generando informe…</p>
-          )}
 
           <p className="CandidateIntro">
             Pulsa <strong>Start</strong> para iniciar. Para responder, pulsa{" "}
@@ -564,17 +473,13 @@ ${fullConversation}
             </button>
           </div>
 
-          {/* ✅ Debug visible SOLO en dev */}
-          {!IS_PROD && !!debug && (
+          {/* ✅ Solución A: debug NO visible en producción */}
+          {!!debug && !IS_PROD && (
             <p style={{ marginTop: 10, fontSize: 13, opacity: 0.9, maxWidth: 720 }}>
               {debug}
             </p>
           )}
         </div>
-
-        {isFinished && (
-          <p style={{ marginTop: 12 }}>✅ Entrevista finalizada. ¡Muchas gracias!</p>
-        )}
 
         <div className="MediaPlayer" style={{ marginTop: 22 }}>
           <video playsInline autoPlay width={450} ref={mediaStream}></video>
