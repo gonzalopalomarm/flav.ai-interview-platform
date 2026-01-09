@@ -10,7 +10,7 @@ const express = require("express");
 const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
 
-// ✅ NEW: para subir audio (multipart/form-data)
+// ✅ para subir audio (multipart/form-data)
 const multer = require("multer");
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -78,12 +78,10 @@ app.options("*", cors());
 app.use(express.json({ limit: "5mb" }));
 
 // ===============================
-// ✅ PASO C: endpoints simples para comprobar que el server está vivo
+// ✅ Endpoints simples para comprobar que el server está vivo
 // ===============================
 app.get("/", (_req, res) => res.status(200).send("OK - flavaai api"));
 app.get("/healthz", (_req, res) => res.status(200).json({ ok: true }));
-
-// (Mantengo tu health anterior por compatibilidad)
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // (Opcional) devolver URL pública del front según backend
@@ -209,7 +207,7 @@ app.get("/api/debug/db", async (_req, res) => {
 });
 
 // =====================================================
-// ✅ NEW: OpenAI server-side endpoints (para producción)
+// ✅ OpenAI server-side endpoints (para producción)
 // =====================================================
 
 function requireOpenAI(res) {
@@ -224,14 +222,43 @@ function requireOpenAI(res) {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
-// 1) Chat completions (para CandidatePage / summary)
+// ✅ 1) Chat completions (para CandidatePage y summaries)
+app.post("/api/openai/chat", async (req, res) => {
+  try {
+    const openai = requireOpenAI(res);
+    if (!openai) return;
+
+    const { messages, model, temperature } = req.body || {};
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: "Faltan messages[]" });
+    }
+
+    const completion = await openai.chat.completions.create({
+      model: String(model || "gpt-4.1-mini"),
+      messages,
+      temperature: typeof temperature === "number" ? temperature : 0.4,
+    });
+
+    const text = completion?.choices?.[0]?.message?.content?.trim() || "";
+    if (!text) return res.status(500).json({ error: "OpenAI devolvió respuesta vacía" });
+
+    res.json({ ok: true, text });
+  } catch (e) {
+    console.error("❌ /api/openai/chat:", e);
+    res.status(500).json({ error: "Error en /api/openai/chat" });
+  }
+});
+
+// ✅ 2) Transcripción (Whisper) - recibe multipart/form-data con "file"
 app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
   try {
     const openai = requireOpenAI(res);
     if (!openai) return;
 
     if (!toFile) {
-      return res.status(500).json({ error: "openai/uploads (toFile) no disponible. Revisa versión del SDK." });
+      return res.status(500).json({
+        error: "openai/uploads (toFile) no disponible. Revisa versión del SDK.",
+      });
     }
 
     const file = req.file;
@@ -247,45 +274,6 @@ app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
 
     // ✅ Buffer -> File compatible con OpenAI SDK
     const audioFile = await toFile(file.buffer, filename, { type: contentType });
-
-    const transcription = await openai.audio.transcriptions.create({
-      file: audioFile,
-      model,
-      language,
-    });
-
-    const text = String(transcription?.text || "").trim();
-    if (!text) return res.status(500).json({ error: "Transcripción vacía" });
-
-    res.json({ ok: true, text });
-  } catch (e) {
-    console.error("❌ /api/openai/transcribe:", e);
-    res.status(500).json({ error: "Error en /api/openai/transcribe" });
-  }
-});
-
-
-// 2) Transcripción (Whisper) - recibe multipart/form-data con "file"
-app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
-  try {
-    const openai = requireOpenAI(res);
-    if (!openai) return;
-
-    const file = req.file;
-    if (!file || !file.buffer) {
-      return res.status(400).json({ error: "Falta archivo (field: file)" });
-    }
-
-    // acepta parámetros opcionales
-    const model = String(req.body?.model || "whisper-1");
-    const language = String(req.body?.language || "es");
-
-    // Node: convertimos buffer -> File (compatible con SDK)
-    const filename = file.originalname || "audio.webm";
-    const contentType = file.mimetype || "audio/webm";
-
-    // File está disponible en Node 18+ (Render usa Node 22 en tus logs)
-    const audioFile = new File([file.buffer], filename, { type: contentType });
 
     const transcription = await openai.audio.transcriptions.create({
       file: audioFile,
@@ -664,7 +652,7 @@ app.get("/api/group-summary/:groupId", async (req, res) => {
 });
 
 // ===============================
-// ✅ Render-compatible listen: PORT + 0.0.0.0 + log correcto
+// ✅ Render-compatible listen
 // ===============================
 const PORT = Number(process.env.PORT || 3001);
 
