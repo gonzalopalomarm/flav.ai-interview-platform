@@ -20,8 +20,12 @@ const upload = multer({
 });
 
 let OpenAI = null;
+let toFile = null;
+
 try {
   OpenAI = require("openai");
+  // ✅ helper oficial para convertir Buffer -> File compatible con el SDK
+  ({ toFile } = require("openai/uploads"));
 } catch {}
 
 const app = express();
@@ -221,32 +225,45 @@ function requireOpenAI(res) {
 }
 
 // 1) Chat completions (para CandidatePage / summary)
-app.post("/api/openai/chat", async (req, res) => {
+app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
   try {
     const openai = requireOpenAI(res);
     if (!openai) return;
 
-    const { messages, model, temperature } = req.body || {};
-
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return res.status(400).json({ error: "Faltan messages[]" });
+    if (!toFile) {
+      return res.status(500).json({ error: "openai/uploads (toFile) no disponible. Revisa versión del SDK." });
     }
 
-    const completion = await openai.chat.completions.create({
-      model: String(model || "gpt-4.1-mini"),
-      messages,
-      temperature: typeof temperature === "number" ? temperature : 0.4,
+    const file = req.file;
+    if (!file || !file.buffer) {
+      return res.status(400).json({ error: "Falta archivo (field: file)" });
+    }
+
+    const model = String(req.body?.model || "whisper-1");
+    const language = String(req.body?.language || "es");
+
+    const filename = file.originalname || "audio.webm";
+    const contentType = file.mimetype || "audio/webm";
+
+    // ✅ Buffer -> File compatible con OpenAI SDK
+    const audioFile = await toFile(file.buffer, filename, { type: contentType });
+
+    const transcription = await openai.audio.transcriptions.create({
+      file: audioFile,
+      model,
+      language,
     });
 
-    const text = completion?.choices?.[0]?.message?.content?.trim() || "";
-    if (!text) return res.status(500).json({ error: "OpenAI devolvió respuesta vacía" });
+    const text = String(transcription?.text || "").trim();
+    if (!text) return res.status(500).json({ error: "Transcripción vacía" });
 
     res.json({ ok: true, text });
   } catch (e) {
-    console.error("❌ /api/openai/chat:", e);
-    res.status(500).json({ error: "Error en /api/openai/chat" });
+    console.error("❌ /api/openai/transcribe:", e);
+    res.status(500).json({ error: "Error en /api/openai/transcribe" });
   }
 });
+
 
 // 2) Transcripción (Whisper) - recibe multipart/form-data con "file"
 app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
