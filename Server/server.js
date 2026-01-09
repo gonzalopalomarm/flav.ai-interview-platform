@@ -207,7 +207,7 @@ app.get("/api/debug/db", async (_req, res) => {
 });
 
 // =====================================================
-// ✅ OpenAI server-side endpoints (para producción)
+// ✅ OpenAI server-side endpoints (PRODUCCIÓN)
 // =====================================================
 
 function requireOpenAI(res) {
@@ -222,7 +222,7 @@ function requireOpenAI(res) {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
-// ✅ 1) Chat completions (para CandidatePage y summaries)
+// ✅ 1) Chat completions (CandidatePage + summary)
 app.post("/api/openai/chat", async (req, res) => {
   try {
     const openai = requireOpenAI(res);
@@ -249,16 +249,15 @@ app.post("/api/openai/chat", async (req, res) => {
   }
 });
 
-// ✅ 2) Transcripción (Whisper) - recibe multipart/form-data con "file"
+// ✅ 2) Transcripción (Whisper) - multipart/form-data (field: file)
+// IMPORTANTE: DEBE EXISTIR SOLO UNA VEZ EN TODO EL SERVER.JS
 app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
   try {
     const openai = requireOpenAI(res);
     if (!openai) return;
 
     if (!toFile) {
-      return res.status(500).json({
-        error: "openai/uploads (toFile) no disponible. Revisa versión del SDK.",
-      });
+      return res.status(500).json({ error: "openai/uploads (toFile) no disponible. Revisa versión del SDK." });
     }
 
     const file = req.file;
@@ -272,7 +271,7 @@ app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
     const filename = file.originalname || "audio.webm";
     const contentType = file.mimetype || "audio/webm";
 
-    // ✅ Buffer -> File compatible con OpenAI SDK
+    // ✅ Buffer -> File compatible (esto arregla el 500 típico)
     const audioFile = await toFile(file.buffer, filename, { type: contentType });
 
     const transcription = await openai.audio.transcriptions.create({
@@ -287,9 +286,11 @@ app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
     res.json({ ok: true, text });
   } catch (e) {
     console.error("❌ /api/openai/transcribe:", e);
+    // ✅ para debug rápido en demo (si quieres más detalle, lo ampliamos)
     res.status(500).json({ error: "Error en /api/openai/transcribe" });
   }
 });
+
 
 // ===============================
 // ✅ ENDPOINTS PUBLICOS PARA CONFIG DE ENTREVISTA
