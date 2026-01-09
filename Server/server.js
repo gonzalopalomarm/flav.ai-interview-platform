@@ -19,14 +19,25 @@ const upload = multer({
   },
 });
 
-let OpenAI = null;
+// =====================================================
+// ✅ OpenAI imports robustos (CJS friendly)
+// =====================================================
+let OpenAIClientCtor = null;
 let toFile = null;
 
 try {
-  OpenAI = require("openai");
-  // ✅ helper oficial para convertir Buffer -> File compatible con el SDK
-  ({ toFile } = require("openai/uploads"));
-} catch {}
+  const openaiMod = require("openai");
+  // puede venir como: function, { default }, { OpenAI }
+  OpenAIClientCtor = openaiMod?.OpenAI || openaiMod?.default || openaiMod;
+
+  const uploadsMod = require("openai/uploads");
+  // puede venir como: { toFile } o { default: { toFile } }
+  toFile = uploadsMod?.toFile || uploadsMod?.default?.toFile || null;
+} catch (e) {
+  // si falla, lo manejamos en runtime
+  OpenAIClientCtor = null;
+  toFile = null;
+}
 
 const app = express();
 
@@ -58,22 +69,25 @@ console.log("🌐 allowedOrigins (CORS):", allowedOrigins);
 console.log("🧾 PUBLIC_CLIENT_URL:", process.env.PUBLIC_CLIENT_URL || null);
 console.log("🧾 CORS_ORIGINS:", process.env.CORS_ORIGINS || null);
 console.log("🧾 PORT (env):", process.env.PORT || null);
+console.log("🧾 NODE_ENV:", process.env.NODE_ENV || null);
+console.log("🧾 OpenAIClientCtor loaded:", !!OpenAIClientCtor);
+console.log("🧾 toFile loaded:", !!toFile);
 
 // OJO: si llega sin origin (curl/postman) lo permitimos.
-app.use(
-  cors({
-    origin: function (origin, cb) {
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.includes(origin)) return cb(null, true);
-      return cb(new Error("Not allowed by CORS: " + origin));
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  })
-);
+const corsOptions = {
+  origin: function (origin, cb) {
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error("Not allowed by CORS: " + origin));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+};
 
-// ✅ Para evitar problemas con preflight en algunos casos
-app.options("*", cors());
+app.use(cors(corsOptions));
+
+// ✅ Preflight consistente con tus reglas (IMPORTANTE)
+app.options("*", cors(corsOptions));
 
 app.use(express.json({ limit: "5mb" }));
 
@@ -83,6 +97,18 @@ app.use(express.json({ limit: "5mb" }));
 app.get("/", (_req, res) => res.status(200).send("OK - flavaai api"));
 app.get("/healthz", (_req, res) => res.status(200).json({ ok: true }));
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// ✅ Para verificar rápido que Render está corriendo ESTE server.js
+app.get("/api/whoami", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "flavaai-api",
+    openaiCtor: !!OpenAIClientCtor,
+    toFile: !!toFile,
+    hasOPENAIKey: !!process.env.OPENAI_API_KEY,
+    node: process.version,
+  });
+});
 
 // (Opcional) devolver URL pública del front según backend
 app.get("/api/public-app-url", (_req, res) => {
@@ -197,8 +223,14 @@ app.get("/api/debug/db", async (_req, res) => {
         PUBLIC_CLIENT_URL: process.env.PUBLIC_CLIENT_URL || null,
         CORS_ORIGINS: process.env.CORS_ORIGINS || null,
         PORT: process.env.PORT || null,
+        NODE_ENV: process.env.NODE_ENV || null,
       },
       allowedOrigins,
+      openai: {
+        openaiCtorLoaded: !!OpenAIClientCtor,
+        toFileLoaded: !!toFile,
+        hasOPENAIKey: !!process.env.OPENAI_API_KEY,
+      },
     });
   } catch (e) {
     console.error("❌ debug/db:", e);
@@ -209,17 +241,16 @@ app.get("/api/debug/db", async (_req, res) => {
 // =====================================================
 // ✅ OpenAI server-side endpoints (PRODUCCIÓN)
 // =====================================================
-
 function requireOpenAI(res) {
-  if (!OpenAI) {
-    res.status(500).json({ error: "Falta paquete openai (npm i openai)" });
+  if (!OpenAIClientCtor) {
+    res.status(500).json({ error: "OpenAI SDK no cargado (require('openai') falló)" });
     return null;
   }
   if (!process.env.OPENAI_API_KEY) {
     res.status(500).json({ error: "Falta OPENAI_API_KEY en variables de entorno (Render)" });
     return null;
   }
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return new OpenAIClientCtor({ apiKey: process.env.OPENAI_API_KEY });
 }
 
 // ✅ 1) Chat completions (CandidatePage + summary)
@@ -244,8 +275,11 @@ app.post("/api/openai/chat", async (req, res) => {
 
     res.json({ ok: true, text });
   } catch (e) {
-    console.error("❌ /api/openai/chat:", e);
-    res.status(500).json({ error: "Error en /api/openai/chat" });
+    console.error("❌ /api/openai/chat:", e?.message || e, e?.stack || "");
+    res.status(500).json({
+      error: "Error en /api/openai/chat",
+      detail: process.env.NODE_ENV === "production" ? undefined : String(e?.message || e),
+    });
   }
 });
 
@@ -257,7 +291,9 @@ app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
     if (!openai) return;
 
     if (!toFile) {
-      return res.status(500).json({ error: "openai/uploads (toFile) no disponible. Revisa versión del SDK." });
+      return res.status(500).json({
+        error: "openai/uploads (toFile) no disponible. Revisa versión del SDK.",
+      });
     }
 
     const file = req.file;
@@ -285,12 +321,14 @@ app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
 
     res.json({ ok: true, text });
   } catch (e) {
-    console.error("❌ /api/openai/transcribe:", e);
-    // ✅ para debug rápido en demo (si quieres más detalle, lo ampliamos)
-    res.status(500).json({ error: "Error en /api/openai/transcribe" });
+    console.error("❌ /api/openai/transcribe:", e?.message || e, e?.stack || "");
+    // devolvemos detail solo fuera de prod
+    res.status(500).json({
+      error: "Error en /api/openai/transcribe",
+      detail: process.env.NODE_ENV === "production" ? undefined : String(e?.message || e),
+    });
   }
 });
-
 
 // ===============================
 // ✅ ENDPOINTS PUBLICOS PARA CONFIG DE ENTREVISTA
@@ -337,7 +375,10 @@ app.post("/api/save-interview-config", async (req, res) => {
       hasMeta: !!meta,
     });
 
-    const check = await get(`SELECT interviewId FROM interview_configs WHERE interviewId = ?`, [id]);
+    const check = await get(
+      `SELECT interviewId FROM interview_configs WHERE interviewId = ?`,
+      [id]
+    );
     console.log("✅ SAVE CONFIG CHECK", { interviewId: id, exists: !!check });
 
     res.json({ ok: true });
@@ -410,7 +451,9 @@ Reglas:
 `.trim();
 
 function buildGroupPrompt(group, blocks) {
-  const restaurantLabel = group.restaurantName ? `Restaurante: ${group.restaurantName}` : `Grupo: ${group.groupId}`;
+  const restaurantLabel = group.restaurantName
+    ? `Restaurante: ${group.restaurantName}`
+    : `Grupo: ${group.groupId}`;
 
   return `
 ${restaurantLabel}
@@ -615,10 +658,8 @@ app.get("/api/group-summary/:groupId", async (req, res) => {
       return res.status(400).json({ error: "No hay summaries individuales todavía para este grupo." });
     }
 
-    if (!OpenAI) return res.status(500).json({ error: "Falta paquete openai (npm i openai)" });
-    if (!process.env.OPENAI_API_KEY) return res.status(500).json({ error: "Falta OPENAI_API_KEY en .env" });
-
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const openai = requireOpenAI(res);
+    if (!openai) return;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4.1-mini",
