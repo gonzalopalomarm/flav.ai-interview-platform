@@ -10,34 +10,23 @@ const express = require("express");
 const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
 
+// ✅ HTTP client (ya lo tienes en package.json)
+const axios = require("axios");
+
 // ✅ para subir audio (multipart/form-data)
 const multer = require("multer");
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 25 * 1024 * 1024, // 25MB
-  },
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB
 });
 
-// =====================================================
-// ✅ OpenAI imports robustos (CJS friendly)
-// =====================================================
-let OpenAIClientCtor = null;
+let OpenAI = null;
 let toFile = null;
 
 try {
-  const openaiMod = require("openai");
-  // puede venir como: function, { default }, { OpenAI }
-  OpenAIClientCtor = openaiMod?.OpenAI || openaiMod?.default || openaiMod;
-
-  const uploadsMod = require("openai/uploads");
-  // puede venir como: { toFile } o { default: { toFile } }
-  toFile = uploadsMod?.toFile || uploadsMod?.default?.toFile || null;
-} catch (e) {
-  // si falla, lo manejamos en runtime
-  OpenAIClientCtor = null;
-  toFile = null;
-}
+  OpenAI = require("openai");
+  ({ toFile } = require("openai/uploads"));
+} catch {}
 
 const app = express();
 
@@ -69,27 +58,24 @@ console.log("🌐 allowedOrigins (CORS):", allowedOrigins);
 console.log("🧾 PUBLIC_CLIENT_URL:", process.env.PUBLIC_CLIENT_URL || null);
 console.log("🧾 CORS_ORIGINS:", process.env.CORS_ORIGINS || null);
 console.log("🧾 PORT (env):", process.env.PORT || null);
-console.log("🧾 NODE_ENV:", process.env.NODE_ENV || null);
-console.log("🧾 OpenAIClientCtor loaded:", !!OpenAIClientCtor);
-console.log("🧾 toFile loaded:", !!toFile);
 
 // OJO: si llega sin origin (curl/postman) lo permitimos.
-const corsOptions = {
-  origin: function (origin, cb) {
-    if (!origin) return cb(null, true);
-    if (allowedOrigins.includes(origin)) return cb(null, true);
-    return cb(new Error("Not allowed by CORS: " + origin));
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-};
+app.use(
+  cors({
+    origin: function (origin, cb) {
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error("Not allowed by CORS: " + origin));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  })
+);
 
-app.use(cors(corsOptions));
+// ✅ Para evitar problemas con preflight en algunos casos
+app.options("*", cors());
 
-// ✅ Preflight consistente con tus reglas (IMPORTANTE)
-app.options("*", cors(corsOptions));
-
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json({ limit: "10mb" }));
 
 // ===============================
 // ✅ Endpoints simples para comprobar que el server está vivo
@@ -98,23 +84,109 @@ app.get("/", (_req, res) => res.status(200).send("OK - flavaai api"));
 app.get("/healthz", (_req, res) => res.status(200).json({ ok: true }));
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// ✅ Para verificar rápido que Render está corriendo ESTE server.js
-app.get("/api/whoami", (_req, res) => {
-  res.json({
-    ok: true,
-    service: "flavaai-api",
-    openaiCtor: !!OpenAIClientCtor,
-    toFile: !!toFile,
-    hasOPENAIKey: !!process.env.OPENAI_API_KEY,
-    node: process.version,
-  });
-});
-
 // (Opcional) devolver URL pública del front según backend
 app.get("/api/public-app-url", (_req, res) => {
   res.json({
     publicAppUrl: String(process.env.PUBLIC_CLIENT_URL || "").trim() || null,
   });
+});
+
+// ✅ Whoami (debug rápido)
+app.get("/api/whoami", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "flavaai-api",
+    openaiCtor: !!OpenAI,
+    toFile: !!toFile,
+    hasOPENAIKey: !!process.env.OPENAI_API_KEY,
+    hasHEYGENKey: !!process.env.HEYGEN_API_KEY,
+    node: process.version,
+  });
+});
+
+// =====================================================
+// ✅ PROXY HeyGen (CORRECTO) para evitar CORS del navegador
+// =====================================================
+//
+// El navegador llamará a:
+//   https://api.flavaai.com/api/heygen/v1/...
+// Y el server reenviará a:
+//   https://api.heygen.com/v1/...
+//
+// IMPORTANTE: aquí SIEMPRE añadimos Authorization con HEYGEN_API_KEY (server-side).
+//
+function requireHeyGen(res) {
+  const key = String(process.env.HEYGEN_API_KEY || "").trim();
+  if (!key) {
+    res.status(500).json({ error: "Falta HEYGEN_API_KEY en Render (Server)" });
+    return null;
+  }
+  return key;
+}
+
+// Preflight específico (por si el navegador hace OPTIONS a /api/heygen/...)
+app.options("/api/heygen/*", (_req, res) => {
+  return res.status(204).send("");
+});
+
+app.all("/api/heygen/*", async (req, res) => {
+  try {
+    const heygenKey = requireHeyGen(res);
+    if (!heygenKey) return;
+
+    // /api/heygen/v1/streaming.new  ->  /v1/streaming.new
+    const targetPath = req.originalUrl.replace("/api/heygen", "");
+    const url = `https://api.heygen.com${targetPath}`;
+
+    // Solo pasamos headers necesarios (NO origin/referer/host/cookies etc)
+    const headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${heygenKey}`,
+    };
+
+    const method = String(req.method || "GET").toUpperCase();
+
+    // Para POST/PUT/PATCH mandamos body; para GET/DELETE no
+    const data =
+      method === "POST" || method === "PUT" || method === "PATCH"
+        ? (req.body && Object.keys(req.body).length ? req.body : {})
+        : undefined;
+
+    const axRes = await axios({
+      method,
+      url,
+      headers,
+      data,
+      validateStatus: () => true, // no lanzar excepción por 4xx/5xx
+      responseType: "arraybuffer", // así soporta JSON y binario
+      timeout: 30000,
+    });
+
+    res.status(axRes.status);
+
+    const ct = axRes.headers["content-type"];
+    if (ct) res.setHeader("content-type", ct);
+
+    const buf = Buffer.from(axRes.data || []);
+
+    // Intentamos devolver JSON si procede
+    if (ct && ct.includes("application/json")) {
+      const text = buf.toString("utf8");
+      try {
+        return res.send(JSON.parse(text));
+      } catch {
+        return res.send(text);
+      }
+    }
+
+    return res.send(buf);
+  } catch (e) {
+    console.error("❌ HeyGen proxy error:", e?.message || e);
+    res.status(500).json({
+      error: "Error proxy HeyGen",
+      detail: e?.message || String(e),
+    });
+  }
 });
 
 // ===============================
@@ -124,8 +196,6 @@ const DATA_DIR = path.join(__dirname, "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const DB_PATH = path.join(DATA_DIR, "summaries.db");
-
-// ✅ Log CLAVE: cuál es la DB real que está usando ESTE backend
 console.log("🗄️ SQLite DB_PATH:", DB_PATH);
 
 const db = new sqlite3.Database(DB_PATH, (err) => {
@@ -162,7 +232,6 @@ function all(sql, params = []) {
 }
 
 async function initDb() {
-  // ✅ configs por entrevista (para que el candidato NO dependa de localStorage)
   await run(`
     CREATE TABLE IF NOT EXISTS interview_configs (
       interviewId TEXT PRIMARY KEY,
@@ -223,14 +292,8 @@ app.get("/api/debug/db", async (_req, res) => {
         PUBLIC_CLIENT_URL: process.env.PUBLIC_CLIENT_URL || null,
         CORS_ORIGINS: process.env.CORS_ORIGINS || null,
         PORT: process.env.PORT || null,
-        NODE_ENV: process.env.NODE_ENV || null,
       },
       allowedOrigins,
-      openai: {
-        openaiCtorLoaded: !!OpenAIClientCtor,
-        toFileLoaded: !!toFile,
-        hasOPENAIKey: !!process.env.OPENAI_API_KEY,
-      },
     });
   } catch (e) {
     console.error("❌ debug/db:", e);
@@ -242,18 +305,34 @@ app.get("/api/debug/db", async (_req, res) => {
 // ✅ OpenAI server-side endpoints (PRODUCCIÓN)
 // =====================================================
 function requireOpenAI(res) {
-  if (!OpenAIClientCtor) {
-    res.status(500).json({ error: "OpenAI SDK no cargado (require('openai') falló)" });
+  if (!OpenAI) {
+    res.status(500).json({ error: "Falta paquete openai (npm i openai)" });
     return null;
   }
   if (!process.env.OPENAI_API_KEY) {
     res.status(500).json({ error: "Falta OPENAI_API_KEY en variables de entorno (Render)" });
     return null;
   }
-  return new OpenAIClientCtor({ apiKey: process.env.OPENAI_API_KEY });
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
-// ✅ 1) Chat completions (CandidatePage + summary)
+// ✅ helper: devolver error real de OpenAI (MUY importante para debug)
+function sendOpenAIError(res, e, where) {
+  const status = e?.status || e?.response?.status || 500;
+  const detail =
+    e?.error?.message ||
+    e?.response?.data?.error?.message ||
+    e?.message ||
+    "Unknown error";
+  console.error(`❌ ${where}:`, e);
+  return res.status(status).json({
+    error: `Error en ${where}`,
+    status,
+    detail,
+  });
+}
+
+// ✅ 1) Chat completions
 app.post("/api/openai/chat", async (req, res) => {
   try {
     const openai = requireOpenAI(res);
@@ -275,16 +354,11 @@ app.post("/api/openai/chat", async (req, res) => {
 
     res.json({ ok: true, text });
   } catch (e) {
-    console.error("❌ /api/openai/chat:", e?.message || e, e?.stack || "");
-    res.status(500).json({
-      error: "Error en /api/openai/chat",
-      detail: process.env.NODE_ENV === "production" ? undefined : String(e?.message || e),
-    });
+    return sendOpenAIError(res, e, "/api/openai/chat");
   }
 });
 
 // ✅ 2) Transcripción (Whisper) - multipart/form-data (field: file)
-// IMPORTANTE: DEBE EXISTIR SOLO UNA VEZ EN TODO EL SERVER.JS
 app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
   try {
     const openai = requireOpenAI(res);
@@ -307,7 +381,6 @@ app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
     const filename = file.originalname || "audio.webm";
     const contentType = file.mimetype || "audio/webm";
 
-    // ✅ Buffer -> File compatible (esto arregla el 500 típico)
     const audioFile = await toFile(file.buffer, filename, { type: contentType });
 
     const transcription = await openai.audio.transcriptions.create({
@@ -321,12 +394,7 @@ app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
 
     res.json({ ok: true, text });
   } catch (e) {
-    console.error("❌ /api/openai/transcribe:", e?.message || e, e?.stack || "");
-    // devolvemos detail solo fuera de prod
-    res.status(500).json({
-      error: "Error en /api/openai/transcribe",
-      detail: process.env.NODE_ENV === "production" ? undefined : String(e?.message || e),
-    });
+    return sendOpenAIError(res, e, "/api/openai/transcribe");
   }
 });
 
@@ -341,8 +409,6 @@ app.post("/api/save-interview-config", async (req, res) => {
     }
 
     const cfg = config || {};
-
-    // Validación mínima
     if (
       !cfg.objective ||
       !cfg.tone ||
@@ -369,18 +435,6 @@ app.post("/api/save-interview-config", async (req, res) => {
       [id, JSON.stringify(cfg), meta ? JSON.stringify(meta) : null, now, now]
     );
 
-    console.log("✅ SAVE CONFIG", {
-      interviewId: id,
-      bytes: JSON.stringify(cfg).length,
-      hasMeta: !!meta,
-    });
-
-    const check = await get(
-      `SELECT interviewId FROM interview_configs WHERE interviewId = ?`,
-      [id]
-    );
-    console.log("✅ SAVE CONFIG CHECK", { interviewId: id, exists: !!check });
-
     res.json({ ok: true });
   } catch (e) {
     console.error("❌ save-interview-config:", e);
@@ -391,18 +445,13 @@ app.post("/api/save-interview-config", async (req, res) => {
 app.get("/api/interview-config/:token", async (req, res) => {
   try {
     const token = String(req.params.token);
-    console.log("🔎 GET CONFIG", { token });
 
     const row = await get(
       `SELECT interviewId, configJson, metaJson, createdAt, updatedAt FROM interview_configs WHERE interviewId = ?`,
       [token]
     );
 
-    if (!row) {
-      const countRow = await get(`SELECT COUNT(*) as n FROM interview_configs`);
-      console.log("🔎 GET CONFIG MISS", { token, totalConfigs: countRow?.n ?? null });
-      return res.status(404).json({ error: "Config no encontrada" });
-    }
+    if (!row) return res.status(404).json({ error: "Config no encontrada" });
 
     let config = null;
     try {
@@ -410,7 +459,6 @@ app.get("/api/interview-config/:token", async (req, res) => {
     } catch {
       config = null;
     }
-
     if (!config) return res.status(500).json({ error: "Config corrupta en BD" });
 
     let meta = undefined;
@@ -434,14 +482,12 @@ app.get("/api/interview-config/:token", async (req, res) => {
 });
 
 // ===============================
-// Global group summary (OpenAI)
+// Group summary (OpenAI)
 // ===============================
 const GROUP_SYSTEM_PROMPT = `
 Eres un consultor senior de research cualitativo (CX/UX/Market Research) especializado en hostelería/restauración.
-
 Vas a recibir VARIOS informes individuales (ya resumidos) de entrevistas del mismo restaurante/grupo.
 Tu tarea es crear UN ÚNICO INFORME GLOBAL, más profesional y visual, siguiendo una estructura muy similar a la de los informes individuales.
-
 Reglas:
 - Responde en ESPAÑOL.
 - No inventes datos. Solo sintetiza lo que aparece en los informes individuales.
@@ -484,7 +530,7 @@ FORMATO:
 }
 
 // ===============================
-// ENDPOINTS: summaries individuales
+// summaries individuales
 // ===============================
 app.post("/api/save-summary", async (req, res) => {
   try {
@@ -538,7 +584,7 @@ app.get("/api/summaries", async (_req, res) => {
 });
 
 // ===============================
-// ENDPOINTS: grupos
+// grupos
 // ===============================
 app.post("/api/save-group", async (req, res) => {
   try {
@@ -589,46 +635,6 @@ app.post("/api/save-group", async (req, res) => {
   }
 });
 
-app.get("/api/group/:groupId", async (req, res) => {
-  try {
-    const gid = String(req.params.groupId);
-    const g = await get(`SELECT * FROM groups WHERE groupId = ?`, [gid]);
-    if (!g) return res.status(404).json({ error: "Grupo no encontrado" });
-
-    res.json({
-      groupId: g.groupId,
-      restaurantName: g.restaurantName || undefined,
-      interviewIds: JSON.parse(g.interviewIds),
-      createdAt: g.createdAt,
-      updatedAt: g.updatedAt,
-    });
-  } catch (e) {
-    console.error("❌ get-group:", e);
-    res.status(500).json({ error: "Error leyendo grupo" });
-  }
-});
-
-app.get("/api/groups", async (_req, res) => {
-  try {
-    const rows = await all(`SELECT * FROM groups ORDER BY updatedAt DESC LIMIT 500`);
-    res.json(
-      rows.map((g) => ({
-        groupId: g.groupId,
-        restaurantName: g.restaurantName || undefined,
-        interviewIds: JSON.parse(g.interviewIds),
-        createdAt: g.createdAt,
-        updatedAt: g.updatedAt,
-      }))
-    );
-  } catch (e) {
-    console.error("❌ list-groups:", e);
-    res.status(500).json([]);
-  }
-});
-
-// ===============================
-// ENDPOINT: informe global de grupo (cache + refresh)
-// ===============================
 app.get("/api/group-summary/:groupId", async (req, res) => {
   try {
     const gid = String(req.params.groupId);
