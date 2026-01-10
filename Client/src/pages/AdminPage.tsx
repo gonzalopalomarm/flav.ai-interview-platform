@@ -1,5 +1,6 @@
 // src/pages/AdminPage.tsx
 // ✅ FORCE GIT CHANGE: admin protection + backend validation (2026-01-10)
+// ✅ FIX (2026-01-10): use adminFetch for admin-protected endpoints (/api/save-interview-config, /api/save-group)
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -105,6 +106,7 @@ const AdminPage: React.FC = () => {
           return;
         }
         setIsAuthed(true);
+        setMessage("✅ Admin autorizado (token validado)."); // ✅ feedback visible
       } catch {
         // Si el backend falla, no te tiramos fuera, pero avisamos.
         setMessage("⚠️ No se pudo validar el token ahora mismo (backend inaccesible).");
@@ -183,7 +185,7 @@ const AdminPage: React.FC = () => {
       const base = Date.now().toString(36);
       const newTokens: string[] = [];
 
-      // ✅ Generar tokens y GUARDAR en backend (esto NO es admin-only)
+      // ✅ Generar tokens y GUARDAR en backend (ADMIN header requerido)
       for (let i = 0; i < numLinks; i++) {
         const token = `${base}-${i + 1}`;
 
@@ -194,7 +196,8 @@ const AdminPage: React.FC = () => {
           createdAt: nowIso,
         };
 
-        const res = await fetch(`${API_BASE}/api/save-interview-config`, {
+        // ✅ FIX: usar adminFetch (manda x-admin-token)
+        const res = await adminFetch(`${API_BASE}/api/save-interview-config`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -231,7 +234,9 @@ const AdminPage: React.FC = () => {
         existing = null;
       }
 
-      const mergedInterviewIds = Array.from(new Set([...(existing?.interviewIds || []), ...newTokens]));
+      const mergedInterviewIds = Array.from(
+        new Set([...(existing?.interviewIds || []), ...newTokens])
+      );
 
       const groupToSave: StoredGroup = {
         groupId: normalizedGroupId,
@@ -243,8 +248,8 @@ const AdminPage: React.FC = () => {
 
       localStorage.setItem(groupKey, JSON.stringify(groupToSave));
 
-      // Guardar grupo en backend (esto NO es admin-only)
-      const resGroup = await fetch(`${API_BASE}/api/save-group`, {
+      // ✅ FIX: usar adminFetch (manda x-admin-token)
+      const resGroup = await adminFetch(`${API_BASE}/api/save-group`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
