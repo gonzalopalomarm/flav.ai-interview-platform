@@ -1,6 +1,8 @@
 // src/pages/AdminPage.tsx
-import React, { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+// ✅ FORCE GIT CHANGE: admin protection + backend validation (2026-01-10)
+
+import React, { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 
 type InterviewConfig = {
   objective: string;
@@ -26,11 +28,37 @@ type InterviewMeta = {
 };
 
 const API_BASE = process.env.REACT_APP_API_BASE_URL || "http://localhost:3001";
-
 const PUBLIC_APP_URL =
   (process.env.REACT_APP_PUBLIC_APP_URL || "").trim() || window.location.origin;
 
+const ADMIN_TOKEN_KEY = "flavaai-admin-token";
+
+function getAdminToken(): string {
+  return String(localStorage.getItem(ADMIN_TOKEN_KEY) || "").trim();
+}
+
+function setAdminToken(token: string) {
+  localStorage.setItem(ADMIN_TOKEN_KEY, token.trim());
+}
+
+function clearAdminToken() {
+  localStorage.removeItem(ADMIN_TOKEN_KEY);
+}
+
+async function adminFetch(url: string, init?: RequestInit) {
+  const token = getAdminToken();
+  const headers = new Headers(init?.headers || {});
+  if (token) headers.set("x-admin-token", token);
+
+  return fetch(url, {
+    ...init,
+    headers,
+  });
+}
+
 const AdminPage: React.FC = () => {
+  const nav = useNavigate();
+
   const [objective, setObjective] = useState("");
   const [questionsText, setQuestionsText] = useState("");
   const [tone, setTone] = useState("Cercano y exploratorio.");
@@ -46,6 +74,8 @@ const AdminPage: React.FC = () => {
   const [generatedTokens, setGeneratedTokens] = useState<string[]>([]);
   const [message, setMessage] = useState<string | null>(null);
 
+  const [isAuthed, setIsAuthed] = useState<boolean>(() => !!getAdminToken());
+
   const normalizeGroupId = (raw: string) =>
     raw
       .trim()
@@ -55,6 +85,60 @@ const AdminPage: React.FC = () => {
 
   const normalizedGroupId = normalizeGroupId(groupId);
   const makeNewGroupId = () => `rest-${Date.now().toString(36)}`;
+
+  // ✅ NUEVO: validación real del token en backend al entrar al admin
+  useEffect(() => {
+    const validate = async () => {
+      const token = getAdminToken();
+      if (!token) {
+        setIsAuthed(false);
+        return;
+      }
+
+      try {
+        const res = await adminFetch(`${API_BASE}/api/admin/ping`);
+        if (!res.ok) {
+          clearAdminToken();
+          setIsAuthed(false);
+          setMessage("❌ Token inválido o expirado. Vuelve a acceder con token.");
+          nav("/");
+          return;
+        }
+        setIsAuthed(true);
+      } catch {
+        // Si el backend falla, no te tiramos fuera, pero avisamos.
+        setMessage("⚠️ No se pudo validar el token ahora mismo (backend inaccesible).");
+      }
+    };
+
+    validate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const requestToken = async () => {
+    const t = window.prompt("Introduce tu ADMIN TOKEN:");
+    if (!t?.trim()) return;
+    setAdminToken(t.trim());
+
+    // comprobamos con ping
+    const res = await adminFetch(`${API_BASE}/api/admin/ping`);
+    if (!res.ok) {
+      clearAdminToken();
+      setIsAuthed(false);
+      setMessage("❌ Token inválido. No autorizado.");
+      return;
+    }
+
+    setIsAuthed(true);
+    setMessage("✅ Token OK. Admin habilitado.");
+  };
+
+  const logout = () => {
+    clearAdminToken();
+    setIsAuthed(false);
+    setMessage("🔒 Token eliminado (logout).");
+    nav("/");
+  };
 
   const testBackend = async () => {
     setMessage(null);
@@ -72,6 +156,10 @@ const AdminPage: React.FC = () => {
     setMessage(null);
 
     try {
+      if (!isAuthed) {
+        throw new Error("🔒 No autorizado. Pulsa ‘Acceder (token)’ primero.");
+      }
+
       const questions = questionsText
         .split("\n")
         .map((q) => q.trim())
@@ -95,7 +183,7 @@ const AdminPage: React.FC = () => {
       const base = Date.now().toString(36);
       const newTokens: string[] = [];
 
-      // ✅ 1) Generar tokens y GUARDAR OBLIGATORIAMENTE en backend
+      // ✅ Generar tokens y GUARDAR en backend (esto NO es admin-only)
       for (let i = 0; i < numLinks; i++) {
         const token = `${base}-${i + 1}`;
 
@@ -125,14 +213,14 @@ const AdminPage: React.FC = () => {
           );
         }
 
-        // localStorage SOLO como debug (ya no es la fuente real)
+        // localStorage SOLO como debug
         localStorage.setItem(`interview-config-${token}`, JSON.stringify(baseConfig));
         localStorage.setItem(`interview-meta-${token}`, JSON.stringify(meta));
 
         newTokens.push(token);
       }
 
-      // ✅ 2) Guardar/merge grupo en localStorage
+      // Guardar grupo en localStorage
       const groupKey = `interview-group-${normalizedGroupId}`;
       const existingRaw = localStorage.getItem(groupKey);
 
@@ -143,9 +231,7 @@ const AdminPage: React.FC = () => {
         existing = null;
       }
 
-      const mergedInterviewIds = Array.from(
-        new Set([...(existing?.interviewIds || []), ...newTokens])
-      );
+      const mergedInterviewIds = Array.from(new Set([...(existing?.interviewIds || []), ...newTokens]));
 
       const groupToSave: StoredGroup = {
         groupId: normalizedGroupId,
@@ -157,7 +243,7 @@ const AdminPage: React.FC = () => {
 
       localStorage.setItem(groupKey, JSON.stringify(groupToSave));
 
-      // ✅ 3) Guardar grupo en backend (obligatorio)
+      // Guardar grupo en backend (esto NO es admin-only)
       const resGroup = await fetch(`${API_BASE}/api/save-group`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -226,10 +312,20 @@ const AdminPage: React.FC = () => {
           API_BASE: <strong>{API_BASE}</strong>
         </p>
 
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: 10, display: "flex", gap: 12, flexWrap: "wrap" }}>
           <button className="PrimaryFlavButton" type="button" onClick={testBackend}>
             🧪 Probar backend
           </button>
+
+          {!isAuthed ? (
+            <button className="PrimaryFlavButton" type="button" onClick={requestToken}>
+              🔐 Acceder (token)
+            </button>
+          ) : (
+            <button className="PrimaryFlavButton" type="button" onClick={logout}>
+              🚪 Logout
+            </button>
+          )}
         </div>
 
         {message && (
@@ -250,6 +346,21 @@ const AdminPage: React.FC = () => {
             textAlign: "left",
           }}
         >
+          {!isAuthed && (
+            <div
+              style={{
+                padding: 14,
+                borderRadius: 12,
+                border: "1px solid #374151",
+                background: "#0b1220",
+                marginBottom: 16,
+                opacity: 0.95,
+              }}
+            >
+              🔒 Para usar el admin, pulsa <strong>“Acceder (token)”</strong>.
+            </div>
+          )}
+
           <h2 style={{ marginTop: 0, marginBottom: 16 }}>📦 Grupo / restaurante</h2>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
@@ -260,6 +371,7 @@ const AdminPage: React.FC = () => {
                 style={{ width: "100%", marginTop: 4 }}
                 value={groupId}
                 onChange={(e) => setGroupId(e.target.value)}
+                disabled={!isAuthed}
               />
               <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
                 Normalizado: <strong>{normalizedGroupId || "—"}</strong>
@@ -273,12 +385,18 @@ const AdminPage: React.FC = () => {
                 style={{ width: "100%", marginTop: 4 }}
                 value={restaurantName}
                 onChange={(e) => setRestaurantName(e.target.value)}
+                disabled={!isAuthed}
               />
             </div>
           </div>
 
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
-            <button className="PrimaryFlavButton" type="button" onClick={() => setGroupId(makeNewGroupId())}>
+            <button
+              className="PrimaryFlavButton"
+              type="button"
+              onClick={() => setGroupId(makeNewGroupId())}
+              disabled={!isAuthed}
+            >
               🔄 Nuevo grupo (ID automático)
             </button>
           </div>
@@ -296,6 +414,7 @@ const AdminPage: React.FC = () => {
                 value={objective}
                 onChange={(e) => setObjective(e.target.value)}
                 placeholder="Escribe el objetivo de la entrevista..."
+                disabled={!isAuthed}
               />
 
               <label style={{ fontSize: 14, opacity: 0.8 }}>Tono</label>
@@ -304,6 +423,7 @@ const AdminPage: React.FC = () => {
                 style={{ width: "100%", marginTop: 4 }}
                 value={tone}
                 onChange={(e) => setTone(e.target.value)}
+                disabled={!isAuthed}
               />
             </div>
 
@@ -315,6 +435,7 @@ const AdminPage: React.FC = () => {
                 value={questionsText}
                 onChange={(e) => setQuestionsText(e.target.value)}
                 placeholder={`Escribe una pregunta por línea...\nEj:\n¿Cuál es tu experiencia previa?\n¿Qué te motiva a este puesto?`}
+                disabled={!isAuthed}
               />
             </div>
           </div>
@@ -330,6 +451,7 @@ const AdminPage: React.FC = () => {
                 style={{ width: "100%", marginTop: 4 }}
                 value={avatarId}
                 onChange={(e) => setAvatarId(e.target.value)}
+                disabled={!isAuthed}
               />
             </div>
             <div>
@@ -339,6 +461,7 @@ const AdminPage: React.FC = () => {
                 style={{ width: "100%", marginTop: 4 }}
                 value={voiceId}
                 onChange={(e) => setVoiceId(e.target.value)}
+                disabled={!isAuthed}
               />
             </div>
           </div>
@@ -352,11 +475,12 @@ const AdminPage: React.FC = () => {
               style={{ width: 120, marginTop: 4 }}
               value={numLinks}
               onChange={(e) => setNumLinks(Number(e.target.value) || 1)}
+              disabled={!isAuthed}
             />
           </div>
 
           <div style={{ marginTop: 20, textAlign: "right" }}>
-            <button className="PrimaryFlavButton" onClick={handleGenerateLinks}>
+            <button className="PrimaryFlavButton" onClick={handleGenerateLinks} disabled={!isAuthed}>
               🚀 Generar enlaces (y crear grupo)
             </button>
           </div>
