@@ -100,21 +100,44 @@ app.get("/api/whoami", (_req, res) => {
     toFile: !!toFile,
     hasOPENAIKey: !!process.env.OPENAI_API_KEY,
     hasHEYGENKey: !!process.env.HEYGEN_API_KEY,
+    hasADMINToken: !!process.env.ADMIN_TOKEN,
     node: process.version,
   });
 });
 
 // =====================================================
+// ✅ ADMIN TOKEN (proteger panel y endpoints internos)
+// =====================================================
+function getAdminToken() {
+  return String(process.env.ADMIN_TOKEN || "").trim();
+}
+
+function requireAdmin(req, res, next) {
+  const serverToken = getAdminToken();
+  if (!serverToken) {
+    // Si no hay token configurado, mejor bloquear por seguridad.
+    return res.status(500).json({ error: "ADMIN_TOKEN no configurado en el server" });
+  }
+
+  // Permitimos 2 formas: header x-admin-token o Authorization: Bearer
+  const headerToken = String(req.headers["x-admin-token"] || "").trim();
+  const auth = String(req.headers.authorization || "").trim();
+  const bearerToken = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+
+  const token = headerToken || bearerToken;
+  if (!token || token !== serverToken) {
+    return res.status(401).json({ error: "Unauthorized (admin)" });
+  }
+
+  return next();
+}
+
+// Ping para comprobar token fácilmente
+app.get("/api/admin/ping", requireAdmin, (_req, res) => res.json({ ok: true }));
+
+// =====================================================
 // ✅ PROXY HeyGen (CORRECTO) para evitar CORS del navegador
 // =====================================================
-//
-// El navegador llamará a:
-//   https://api.flavaai.com/api/heygen/v1/...
-// Y el server reenviará a:
-//   https://api.heygen.com/v1/...
-//
-// IMPORTANTE: aquí SIEMPRE añadimos Authorization con HEYGEN_API_KEY (server-side).
-//
 function requireHeyGen(res) {
   const key = String(process.env.HEYGEN_API_KEY || "").trim();
   if (!key) {
@@ -134,22 +157,20 @@ app.all("/api/heygen/*", async (req, res) => {
     const heygenKey = requireHeyGen(res);
     if (!heygenKey) return;
 
-    // /api/heygen/v1/streaming.new  ->  /v1/streaming.new
     const targetPath = req.originalUrl.replace("/api/heygen", "");
     const url = `https://api.heygen.com${targetPath}`;
 
-    // Solo pasamos headers necesarios (NO origin/referer/host/cookies etc)
     const headers = {
       "Content-Type": "application/json",
       Authorization: `Bearer ${heygenKey}`,
     };
 
     const method = String(req.method || "GET").toUpperCase();
-
-    // Para POST/PUT/PATCH mandamos body; para GET/DELETE no
     const data =
       method === "POST" || method === "PUT" || method === "PATCH"
-        ? (req.body && Object.keys(req.body).length ? req.body : {})
+        ? req.body && Object.keys(req.body).length
+          ? req.body
+          : {}
         : undefined;
 
     const axRes = await axios({
@@ -157,8 +178,8 @@ app.all("/api/heygen/*", async (req, res) => {
       url,
       headers,
       data,
-      validateStatus: () => true, // no lanzar excepción por 4xx/5xx
-      responseType: "arraybuffer", // así soporta JSON y binario
+      validateStatus: () => true,
+      responseType: "arraybuffer",
       timeout: 30000,
     });
 
@@ -169,7 +190,6 @@ app.all("/api/heygen/*", async (req, res) => {
 
     const buf = Buffer.from(axRes.data || []);
 
-    // Intentamos devolver JSON si procede
     if (ct && ct.includes("application/json")) {
       const text = buf.toString("utf8");
       try {
@@ -273,7 +293,8 @@ async function initDb() {
 }
 
 // ✅ ENDPOINT DEBUG: confirma DB + contadores + ENV real + CORS real
-app.get("/api/debug/db", async (_req, res) => {
+// 🔒 protegido porque da info interna
+app.get("/api/debug/db", requireAdmin, async (_req, res) => {
   try {
     const row1 = await get(`SELECT COUNT(*) as n FROM interview_configs`);
     const row2 = await get(`SELECT COUNT(*) as n FROM summaries`);
@@ -316,7 +337,6 @@ function requireOpenAI(res) {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
-// ✅ helper: devolver error real de OpenAI (MUY importante para debug)
 function sendOpenAIError(res, e, where) {
   const status = e?.status || e?.response?.status || 500;
   const detail =
@@ -358,7 +378,7 @@ app.post("/api/openai/chat", async (req, res) => {
   }
 });
 
-// ✅ 2) Transcripción (Whisper) - multipart/form-data (field: file)
+// ✅ 2) Transcripción (Whisper)
 app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
   try {
     const openai = requireOpenAI(res);
@@ -482,7 +502,7 @@ app.get("/api/interview-config/:token", async (req, res) => {
 });
 
 // ===============================
-// Group summary (OpenAI)
+// Group summary (OpenAI) -> Público (lo ve candidato)
 // ===============================
 const GROUP_SYSTEM_PROMPT = `
 Eres un consultor senior de research cualitativo (CX/UX/Market Research) especializado en hostelería/restauración.
@@ -573,7 +593,8 @@ app.get("/api/summary/:token", async (req, res) => {
   }
 });
 
-app.get("/api/summaries", async (_req, res) => {
+// 🔒 LISTADO de summaries = ADMIN ONLY
+app.get("/api/summaries", requireAdmin, async (_req, res) => {
   try {
     const rows = await all(`SELECT * FROM summaries ORDER BY createdAt DESC LIMIT 500`);
     res.json(rows);
@@ -632,6 +653,25 @@ app.post("/api/save-group", async (req, res) => {
   } catch (e) {
     console.error("❌ save-group:", e);
     res.status(500).json({ error: "Error guardando grupo" });
+  }
+});
+
+// ✅ listado grupos (para admin normalmente) -> ADMIN ONLY
+app.get("/api/groups", requireAdmin, async (_req, res) => {
+  try {
+    const rows = await all(`SELECT * FROM groups ORDER BY updatedAt DESC LIMIT 500`);
+    res.json(
+      rows.map((g) => ({
+        groupId: g.groupId,
+        restaurantName: g.restaurantName || undefined,
+        interviewIds: JSON.parse(g.interviewIds),
+        createdAt: g.createdAt,
+        updatedAt: g.updatedAt,
+      }))
+    );
+  } catch (e) {
+    console.error("❌ list-groups:", e);
+    res.status(500).json([]);
   }
 });
 
