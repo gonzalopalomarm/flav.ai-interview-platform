@@ -1,4 +1,6 @@
 // Server/server.js
+// ✅ FORCE GIT CHANGE: lock down admin endpoints + protect refresh (2026-01-10)
+
 const path = require("path");
 const fs = require("fs");
 
@@ -419,9 +421,11 @@ app.post("/api/openai/transcribe", upload.single("file"), async (req, res) => {
 });
 
 // ===============================
-// ✅ ENDPOINTS PUBLICOS PARA CONFIG DE ENTREVISTA
+// ✅ ENDPOINTS PARA CONFIG DE ENTREVISTA
 // ===============================
-app.post("/api/save-interview-config", async (req, res) => {
+// 🔒 RECOMENDADO: proteger creación de config (para que solo tú generes enlaces)
+// Si prefieres mantenerlo público, quita requireAdmin aquí.
+app.post("/api/save-interview-config", requireAdmin, async (req, res) => {
   try {
     const { interviewId, config, meta } = req.body || {};
     if (!interviewId || !config) {
@@ -502,7 +506,9 @@ app.get("/api/interview-config/:token", async (req, res) => {
 });
 
 // ===============================
-// Group summary (OpenAI) -> Público (lo ve candidato)
+// Group summary (OpenAI)
+// - Público: cached (sin refresh)
+// - 🔒 Admin: refresh=1
 // ===============================
 const GROUP_SYSTEM_PROMPT = `
 Eres un consultor senior de research cualitativo (CX/UX/Market Research) especializado en hostelería/restauración.
@@ -580,7 +586,8 @@ app.post("/api/save-summary", async (req, res) => {
   }
 });
 
-app.get("/api/summary/:token", async (req, res) => {
+// 🔒 DETALLE summary por token = ADMIN ONLY (si quieres que el candidato NO vea el texto)
+app.get("/api/summary/:token", requireAdmin, async (req, res) => {
   try {
     const token = String(req.params.token);
     const row = await get(`SELECT * FROM summaries WHERE interviewId = ?`, [token]);
@@ -607,7 +614,8 @@ app.get("/api/summaries", requireAdmin, async (_req, res) => {
 // ===============================
 // grupos
 // ===============================
-app.post("/api/save-group", async (req, res) => {
+// 🔒 RECOMENDADO: proteger creación de grupos (si quieres que SOLO tú puedas crear grupos)
+app.post("/api/save-group", requireAdmin, async (req, res) => {
   try {
     const { groupId, restaurantName, interviewIds } = req.body || {};
     if (!groupId || !Array.isArray(interviewIds) || interviewIds.length === 0) {
@@ -679,6 +687,19 @@ app.get("/api/group-summary/:groupId", async (req, res) => {
   try {
     const gid = String(req.params.groupId);
     const refresh = String(req.query.refresh || "") === "1";
+
+    // 🔒 Si piden refresh=1, exigimos admin (evita abuso / coste OpenAI)
+    if (refresh) {
+      let denied = false;
+      await new Promise((resolve) => {
+        requireAdmin(req, res, () => resolve());
+        // si requireAdmin respondió con 401/500, ya cortó la respuesta
+        // aquí marcamos denied si headers ya enviados
+        denied = res.headersSent;
+        resolve();
+      });
+      if (denied) return;
+    }
 
     const g = await get(`SELECT * FROM groups WHERE groupId = ?`, [gid]);
     if (!g) return res.status(404).json({ error: "Grupo no encontrado" });
