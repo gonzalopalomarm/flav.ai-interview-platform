@@ -11,7 +11,7 @@ const HomePage: React.FC = () => {
           <div className="BrandLeft">
             <div className="BrandText">
               <span className="BrandName">FLAV AI</span>
-              <span className="BrandSubtitle"> - Entrevistas inteligentes</span>
+              <span className="BrandSubtitle"> - Entrevistas </span>
             </div>
           </div>
         </div>
