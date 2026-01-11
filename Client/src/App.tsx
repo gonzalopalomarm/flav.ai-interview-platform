@@ -37,7 +37,7 @@ const RestrictedPage: React.FC = () => {
       <header className="App-header" style={{ alignItems: "flex-start" }}>
         <h1 style={{ marginTop: 10 }}>Acceso restringido</h1>
         <p style={{ opacity: 0.85, maxWidth: 720 }}>
-          Esta plataforma solo es pública para candidatos mediante un enlace directo de entrevista
+          Esta plataforma solo es pública para candidatos mediante un enlace directo de entrevista{" "}
           (<strong>/candidate/&lt;token&gt;</strong>).
           <br />
           Si eres parte del equipo interno, introduce el token en el panel de Admin desde un dispositivo autorizado.
@@ -78,6 +78,11 @@ const TopNav: React.FC = () => {
           <div className="TopNavLinks">
             <NavLink to="/" end className={({ isActive }) => `TopNavLink ${isActive ? "active" : ""}`}>
               Home
+            </NavLink>
+
+            {/* ✅ Admin vuelve al menú (solo visible si hay token) */}
+            <NavLink to="/admin" className={({ isActive }) => `TopNavLink ${isActive ? "active" : ""}`}>
+              Admin
             </NavLink>
 
             <NavLink to="/results" className={({ isActive }) => `TopNavLink ${isActive ? "active" : ""}`}>
