@@ -1,7 +1,5 @@
 // src/App.tsx
-// ✅ FORCE GIT CHANGE: RequireAdminRoute validates token with backend (2026-01-10)
-
-import React, { useEffect, useState } from "react";
+import React from "react";
 import {
   BrowserRouter as Router,
   Routes,
@@ -21,81 +19,68 @@ import ResultsGroupPage from "./pages/ResultsGroupPage";
 
 import amintLogo from "./assets/amint-logo.png";
 
-const API_BASE = process.env.REACT_APP_API_BASE_URL || "http://localhost:3001";
 const ADMIN_TOKEN_KEY = "flavaai-admin-token";
 
+// ✅ robusto: evita tokens basura tipo "undefined"
+function hasAdminToken() {
+  const t = String(localStorage.getItem(ADMIN_TOKEN_KEY) || "").trim();
+  if (!t) return false;
+  if (t === "undefined" || t === "null" || t === "false") return false;
+  if (t.length < 10) return false;
+  return true;
+}
+
+// ✅ Pantalla “no pública” (no hay rutas públicas extra, solo se renderiza en rutas internas)
+const RestrictedPage: React.FC = () => {
+  return (
+    <div className="HeyGenStreamingAvatar">
+      <header className="App-header" style={{ alignItems: "flex-start" }}>
+        <h1 style={{ marginTop: 10 }}>Acceso restringido</h1>
+        <p style={{ opacity: 0.85, maxWidth: 720 }}>
+          Esta plataforma solo es pública para candidatos mediante un enlace directo de entrevista
+          (<strong>/candidate/&lt;token&gt;</strong>).
+          <br />
+          Si eres parte del equipo interno, introduce el token en el panel de Admin desde un dispositivo autorizado.
+        </p>
+      </header>
+    </div>
+  );
+};
+
+// ✅ En vez de redirigir a una ruta pública, renderiza RestrictedPage
 const RequireAdminRoute: React.FC<{ children: React.ReactElement }> = ({ children }) => {
-  const [state, setState] = useState<"checking" | "ok" | "no">("checking");
-
-  useEffect(() => {
-    const run = async () => {
-      const token = String(localStorage.getItem(ADMIN_TOKEN_KEY) || "").trim();
-      if (!token) {
-        setState("no");
-        return;
-      }
-
-      try {
-        const res = await fetch(`${API_BASE}/api/admin/ping`, {
-          headers: { "x-admin-token": token },
-        });
-
-        if (!res.ok) {
-          localStorage.removeItem(ADMIN_TOKEN_KEY);
-          setState("no");
-          return;
-        }
-
-        setState("ok");
-      } catch {
-        // Si backend no responde, por seguridad NO damos acceso.
-        setState("no");
-      }
-    };
-
-    run();
-  }, []);
-
-  if (state === "checking") return null;
-  if (state === "no") return <Navigate to="/" replace />;
+  if (!hasAdminToken()) return <RestrictedPage />;
   return children;
 };
 
 const TopNav: React.FC = () => {
   const location = useLocation();
-  const isCandidateRoute = location.pathname.startsWith("/candidate/");
+
+  const isCandidateInterviewRoute = location.pathname.startsWith("/candidate/");
+  const isAuthed = hasAdminToken();
+
+  // ✅ Si es candidato o no authed -> ocultar navegación interna
+  const hideInternalNav = isCandidateInterviewRoute || !isAuthed;
 
   return (
     <nav className="TopNav">
-      {/* ✅ El logo siempre va a HOME (no a admin) */}
-      <NavLink className="TopNavLogo" to="/" aria-label="Ir a Home">
+      {/* Si no authed, el logo NO debe llevar a una zona “interna real” */}
+      <NavLink className="TopNavLogo" to={isAuthed ? "/" : "#"} aria-label="Ir a Home">
         <img
           src={amintLogo}
-          alt="AMINT"
+          alt="FLAV.AI"
           onError={(e) => console.error("❌ No se pudo cargar el logo", e)}
         />
       </NavLink>
 
-      {!isCandidateRoute && (
+      {!hideInternalNav && (
         <>
           <div className="TopNavLinks">
-            <NavLink
-              to="/"
-              end
-              className={({ isActive }) => `TopNavLink ${isActive ? "active" : ""}`}
-            >
+            <NavLink to="/" end className={({ isActive }) => `TopNavLink ${isActive ? "active" : ""}`}>
               Home
             </NavLink>
 
-            {/* ❌ Quitamos link a Admin del menú */}
-            {/* <NavLink to="/admin" className={({ isActive }) => `TopNavLink ${isActive ? "active" : ""}`}>
-              Admin
-            </NavLink> */}
-
-            <NavLink
-              to="/results"
-              className={({ isActive }) => `TopNavLink ${isActive ? "active" : ""}`}
-            >
+            <NavLink to="/results" className={({ isActive }) => `TopNavLink ${isActive ? "active" : ""}`}>
               Results
             </NavLink>
           </div>
@@ -117,9 +102,19 @@ const App: React.FC = () => {
 
       <main className="AppShell">
         <Routes>
-          <Route path="/" element={<HomePage />} />
+          {/* ✅ ÚNICA ruta pública */}
+          <Route path="/candidate/:token" element={<CandidatePage />} />
 
-          {/* ✅ Ruta admin protegida + validada en backend */}
+          {/* 🔒 TODO lo demás requiere token */}
+          <Route
+            path="/"
+            element={
+              <RequireAdminRoute>
+                <HomePage />
+              </RequireAdminRoute>
+            }
+          />
+
           <Route
             path="/admin"
             element={
@@ -129,19 +124,44 @@ const App: React.FC = () => {
             }
           />
 
-          <Route path="/candidate/:token" element={<CandidatePage />} />
+          <Route
+            path="/results"
+            element={
+              <RequireAdminRoute>
+                <ResultsListPage />
+              </RequireAdminRoute>
+            }
+          />
 
-          {/* ✅ LISTADO */}
-          <Route path="/results" element={<ResultsListPage />} />
+          <Route
+            path="/results/group/:groupId"
+            element={
+              <RequireAdminRoute>
+                <ResultsGroupPage />
+              </RequireAdminRoute>
+            }
+          />
 
-          {/* ✅ DETALLE DE GRUPO */}
-          <Route path="/results/group/:groupId" element={<ResultsGroupPage />} />
-
-          {/* ✅ compatibilidad */}
           <Route path="/results/demo" element={<Navigate to="/results" replace />} />
 
-          {/* ✅ DETALLE POR TOKEN */}
-          <Route path="/results/:token" element={<ResultsPage />} />
+          <Route
+            path="/results/:token"
+            element={
+              <RequireAdminRoute>
+                <ResultsPage />
+              </RequireAdminRoute>
+            }
+          />
+
+          {/* Catch-all: cualquier otra ruta -> si no hay token, RestrictedPage (vía RequireAdminRoute) */}
+          <Route
+            path="*"
+            element={
+              <RequireAdminRoute>
+                <HomePage />
+              </RequireAdminRoute>
+            }
+          />
         </Routes>
       </main>
     </Router>
