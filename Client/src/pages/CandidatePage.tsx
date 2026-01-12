@@ -100,12 +100,13 @@ const CandidatePage: React.FC = () => {
   const [isFinished, setIsFinished] = useState(false);
 
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const hasSavedRef = useRef(false);
 
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
-  // ✅ NUEVO: overlay “tu entrevistador se está uniendo…”
+  // ✅ overlay “tu entrevistador se está uniendo…”
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectingMsg, setConnectingMsg] = useState(
     "Tu entrevistador se está uniendo a la llamada. Por favor espere unos breves instantes y asegúrese de tener una conexión estable a internet. Si no funciona, refresque la página del navegador y vuelva a internarlo."
@@ -240,6 +241,9 @@ const CandidatePage: React.FC = () => {
 
       if (!avatarId || !voiceId) return setDebug("Hay un problema con la configuración del avatar.");
 
+      // reset guardado summary
+      hasSavedRef.current = false;
+
       setConnectingMsg(
         "Tu entrevistador se está uniendo a la llamada. Por favor espere unos breves instantes y asegúrese de tener una conexión estable a internet."
       );
@@ -296,17 +300,24 @@ const CandidatePage: React.FC = () => {
 
       const handleLoadedData = () => {
         setIsConnecting(false);
+        // 🔊 Asegura audio
+        videoEl.muted = false;
+        videoEl.volume = 1;
       };
 
       const handleError = () => {
         setIsConnecting(false);
-        setDebug("No se pudo cargar el vídeo del entrevistador. Revisa tu conexión e inténtalo de nuevo.");
+        setDebug(
+          "No se pudo cargar el vídeo del entrevistador. Revisa tu conexión e inténtalo de nuevo."
+        );
       };
 
       videoEl.onloadeddata = handleLoadedData;
       videoEl.onerror = handleError as any;
 
       videoEl.onloadedmetadata = () => {
+        videoEl.muted = false;
+        videoEl.volume = 1;
         videoEl.play().catch(() => {});
       };
 
@@ -335,6 +346,37 @@ const CandidatePage: React.FC = () => {
       throw new Error(json?.detail || json?.error || `OpenAI chat error (HTTP ${res.status})`);
     }
     return String(json?.text || "").trim();
+  }
+
+  // ✅ NUEVO: genera resumen individual cuando termina la entrevista
+  async function buildInterviewSummary(fullConversation: string) {
+    const prompt = `
+Actúa como un/a profesional senior en sociología y estudios cualitativos, con amplia experiencia en Voice of the Customer y análisis de experiencia de cliente en restauración.
+
+Tu tarea: generar un RESUMEN INDIVIDUAL de esta entrevista.
+
+Enfócate SOLO en la experiencia en el restaurante (servicio, atención, ambiente, tiempos, interacción con el personal, momentos críticos y percepción global). No evalúes producto de forma aislada.
+
+Devuelve en español con esta estructura:
+1) Resumen ejecutivo (5–7 líneas)
+2) Insights clave (bullets)
+3) Fricciones / pain points (bullets)
+4) Oportunidades / recomendaciones (bullets)
+5) Cita textual representativa (1–2 frases si hay material)
+
+Transcripción (formato diálogo):
+${fullConversation}
+`.trim();
+
+    const summary = await openaiChat(
+      [
+        { role: "system", content: "Eres un/a investigador/a cualitativo/a senior." },
+        { role: "user", content: prompt },
+      ],
+      { model: "gpt-4.1-mini", temperature: 0.3 }
+    );
+
+    return summary;
   }
 
   async function runInterviewTurn(answerText: string) {
@@ -393,6 +435,50 @@ Instrucciones para tu siguiente respuesta:
     });
   }
 
+  // ✅ Al terminar: generar + guardar resumen UNA vez
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        if (!isFinished) return;
+        if (!interviewToken) return;
+        if (hasSavedRef.current) return;
+        if (isSummarizing) return;
+
+        // evita guardar vacío
+        if (!conversation || conversation.trim().length < 30) return;
+
+        hasSavedRef.current = true;
+        setIsSummarizing(true);
+
+        // En prod no mostramos debug, pero en dev te sirve
+        setDebug("Generando y guardando el resumen…");
+
+        const summary = await buildInterviewSummary(conversation);
+        if (cancelled) return;
+
+        await saveSummaryToBackend(interviewToken, summary, conversation);
+        if (cancelled) return;
+
+        setDebug("✅ Resumen guardado correctamente.");
+      } catch (e: any) {
+        console.error(e);
+        hasSavedRef.current = false; // permite reintentar
+        setDebug(e?.message || "❌ Error generando/guardando el resumen.");
+      } finally {
+        if (!cancelled) setIsSummarizing(false);
+      }
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isFinished, interviewToken, conversation, isSummarizing]);
+
+  // ✅ Whisper via BACKEND
   async function transcribeOnBackend(audioBlob: Blob) {
     const formData = new FormData();
     formData.append("file", audioBlob, "audio.webm");
@@ -486,7 +572,7 @@ Instrucciones para tu siguiente respuesta:
     );
   }
 
-  const voiceDisabled = isFinished || !data?.sessionId;
+  const voiceDisabled = isFinished || !data?.sessionId || isConnecting || isSummarizing;
 
   return (
     <div className="HeyGenStreamingAvatar">
@@ -511,15 +597,27 @@ Instrucciones para tu siguiente respuesta:
           </p>
 
           <div className="CandidateButtonsRow">
-            <button className="PrimaryFlavButton" onClick={grab} disabled={isFinished || isConnecting}>
-              {isConnecting ? "Conectando…" : "Start"}
+            <button
+              className="PrimaryFlavButton"
+              onClick={grab}
+              disabled={isFinished || isConnecting || isSummarizing}
+            >
+              {isConnecting ? "Conectando…" : isSummarizing ? "Guardando…" : "Start"}
             </button>
 
             <button
               className="PrimaryFlavButton"
               onClick={isRecording ? stopRecording : startRecording}
-              disabled={voiceDisabled || isConnecting}
-              title={voiceDisabled ? "Primero pulsa Start" : isConnecting ? "Conectando…" : undefined}
+              disabled={voiceDisabled}
+              title={
+                voiceDisabled
+                  ? isSummarizing
+                    ? "Guardando resumen…"
+                    : isConnecting
+                    ? "Conectando…"
+                    : "Primero pulsa Start"
+                  : undefined
+              }
             >
               {isRecording ? "🔴 Detener grabación" : "🎤 Responder por voz"}
             </button>
@@ -531,15 +629,10 @@ Instrucciones para tu siguiente respuesta:
             </p>
           )}
 
-          {/* ✅ MOVIDO: el avatar queda debajo de los botones */}
+          {/* Avatar debajo de botones */}
           <div className="MediaPlayer" style={{ marginTop: 22 }}>
             <div className="AvatarFrame">
-              <video
-                ref={mediaStream}
-                className="AvatarVideo"
-                playsInline
-                autoPlay
-              />
+              <video ref={mediaStream} className="AvatarVideo" playsInline autoPlay />
 
               {isFinished && (
                 <div className="AvatarOverlay" role="status" aria-live="polite">
