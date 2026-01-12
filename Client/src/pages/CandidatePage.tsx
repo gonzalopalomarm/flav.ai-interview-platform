@@ -539,7 +539,6 @@ Instrucciones para tu siguiente respuesta:
                 className="AvatarVideo"
                 playsInline
                 autoPlay
-                muted
               />
 
               {isFinished && (
