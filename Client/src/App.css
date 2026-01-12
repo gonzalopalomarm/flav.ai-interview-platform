@@ -325,36 +325,63 @@ h3 {
 }
 
 /* =========================
-   Interview Finished Banner
+   Avatar frame + overlay FIN
    ========================= */
-.InterviewFinishedBanner {
-  width: 450px;               /* mismo ancho que el vídeo */
+
+.AvatarFrame {
+  position: relative !important;
+  width: 450px;
   max-width: 100%;
-  margin: 0 auto 12px;
+  margin: 0 auto;
 
-  padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: 12px;
+  overflow: hidden;
+}
 
-  background: rgba(15, 23, 42, 0.88);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+.AvatarVideo {
+  width: 100% !important;
+  height: auto !important;
+  display: block !important;
+}
 
-  box-shadow:
-    0 16px 45px rgba(0, 0, 0, 0.40),
-    0 8px 20px rgba(255, 40, 40, 0.12);
+/* Overlay encima del vídeo, tapando la cara*/
+.AvatarOverlay {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 9999 !important;
+
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.AvatarOverlayBox {
+  width: min(380px, 86%);
+  padding: 16px 18px;
+  border-radius: 16px;
+
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 
   text-align: center;
+
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.55),
+    0 8px 22px rgba(255, 40, 40, 0.25);
 }
 
-.InterviewFinishedTitle {
+.AvatarOverlayTitle {
+  font-size: 16px;
   font-weight: 800;
-  font-size: 15px;
   color: var(--text);
-  letter-spacing: 0.2px;
+  margin-bottom: 6px;
 }
 
-.InterviewFinishedText {
-  margin-top: 4px;
+.AvatarOverlayText {
   font-size: 13px;
   color: var(--muted);
-  line-height: 1.35;
+  line-height: 1.4;
 }
