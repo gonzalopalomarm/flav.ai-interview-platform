@@ -323,3 +323,38 @@ h3 {
     transform: rotate(360deg);
   }
 }
+
+/* =========================
+   Interview Finished Banner
+   ========================= */
+.InterviewFinishedBanner {
+  width: 450px;               /* mismo ancho que el vídeo */
+  max-width: 100%;
+  margin: 0 auto 12px;
+
+  padding: 12px 14px;
+  border-radius: 14px;
+
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+
+  box-shadow:
+    0 16px 45px rgba(0, 0, 0, 0.40),
+    0 8px 20px rgba(255, 40, 40, 0.12);
+
+  text-align: center;
+}
+
+.InterviewFinishedTitle {
+  font-weight: 800;
+  font-size: 15px;
+  color: var(--text);
+  letter-spacing: 0.2px;
+}
+
+.InterviewFinishedText {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.35;
+}

@@ -534,9 +534,19 @@ Instrucciones para tu siguiente respuesta:
           )}
         </div>
 
-        <div className="MediaPlayer" style={{ marginTop: 22 }}>
-          <video playsInline autoPlay width={450} ref={mediaStream}></video>
-        </div>
+       <div className="MediaPlayer" style={{ marginTop: 22 }}>
+  {isFinished && (
+    <div className="InterviewFinishedBanner" role="status" aria-live="polite">
+      <div className="InterviewFinishedTitle">✅ Entrevista finalizada</div>
+      <div className="InterviewFinishedText">
+        Muchas gracias por tu tiempo, tus respuestas se han guardado correctamente. Ya puedes cerrar esta pestaña del navegador.
+      </div>
+    </div>
+  )}
+
+  <video playsInline autoPlay width={450} ref={mediaStream}></video>
+</div>
+
       </header>
     </div>
   );
