@@ -534,18 +534,32 @@ Instrucciones para tu siguiente respuesta:
           )}
         </div>
 
-       <div className="MediaPlayer" style={{ marginTop: 22 }}>
-  {isFinished && (
-    <div className="InterviewFinishedBanner" role="status" aria-live="polite">
-      <div className="InterviewFinishedTitle">✅ Entrevista finalizada</div>
-      <div className="InterviewFinishedText">
-        Muchas gracias por tu tiempo, tus respuestas se han guardado correctamente. Ya puedes cerrar esta pestaña del navegador.
-      </div>
-    </div>
-  )}
+<<div className="MediaPlayer" style={{ marginTop: 22 }}>
+  <div className="VideoWrapper">
+    <video
+      playsInline
+      autoPlay
+      width={450}
+      ref={mediaStream}
+    />
 
-  <video playsInline autoPlay width={450} ref={mediaStream}></video>
+    {isFinished && (
+      <div className="InterviewFinishedOverlay" role="status" aria-live="polite">
+        <div className="InterviewFinishedOverlayBox">
+          <div className="InterviewFinishedOverlayTitle">
+            ✅ Entrevista finalizada
+          </div>
+          <div className="InterviewFinishedOverlayText">
+            Muchas gracias por tu tiempo.
+            <br />
+            Ya puedes cerrar esta pestaña del navegador.
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
 </div>
+
 
       </header>
     </div>
