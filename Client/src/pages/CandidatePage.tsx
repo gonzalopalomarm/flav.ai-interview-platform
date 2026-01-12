@@ -102,6 +102,12 @@ const CandidatePage: React.FC = () => {
   const [isSummarizing, setIsSummarizing] = useState(false);
   const hasSavedRef = useRef(false);
 
+  // ✅ NUEVO: estado visible SIEMPRE (también en PROD)
+  const [summaryStatus, setSummaryStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const [summaryErrorMsg, setSummaryErrorMsg] = useState<string>("");
+
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -244,6 +250,10 @@ const CandidatePage: React.FC = () => {
       // reset guardado summary
       hasSavedRef.current = false;
       setIsSummarizing(false);
+
+      // ✅ reset estado visible del resumen
+      setSummaryStatus("idle");
+      setSummaryErrorMsg("");
 
       setConnectingMsg(
         "Tu entrevistador se está uniendo a la llamada. Por favor espere unos breves instantes y asegúrese de tener una conexión estable a internet."
@@ -437,7 +447,7 @@ Instrucciones para tu siguiente respuesta:
     });
   }
 
-  // ✅ Al terminar: generar + guardar resumen UNA vez
+  // ✅ Al terminar: generar + guardar resumen UNA vez (con estado visible en PROD)
   useEffect(() => {
     let cancelled = false;
 
@@ -453,6 +463,8 @@ Instrucciones para tu siguiente respuesta:
 
         hasSavedRef.current = true;
         setIsSummarizing(true);
+        setSummaryStatus("saving");
+        setSummaryErrorMsg("");
 
         if (!IS_PROD) setDebug("Generando y guardando el resumen…");
 
@@ -462,10 +474,15 @@ Instrucciones para tu siguiente respuesta:
         await saveSummaryToBackend(interviewToken, summary, conversation);
         if (cancelled) return;
 
+        setSummaryStatus("saved");
         if (!IS_PROD) setDebug("✅ Resumen guardado correctamente.");
       } catch (e: any) {
-        console.error(e);
+        console.error("❌ Error generando/guardando el resumen:", e);
         hasSavedRef.current = false; // permite reintentar
+
+        setSummaryStatus("error");
+        setSummaryErrorMsg(e?.message || "Error guardando el resumen.");
+
         setDebug(e?.message || "❌ Error generando/guardando el resumen.");
       } finally {
         if (!cancelled) setIsSummarizing(false);
@@ -623,6 +640,19 @@ Instrucciones para tu siguiente respuesta:
               {isRecording ? "🔴 Detener grabación" : "🎤 Responder por voz"}
             </button>
           </div>
+
+          {/* ✅ NUEVO: estado del resumen visible SIEMPRE (también en PROD) */}
+          {(summaryStatus === "saving" ||
+            summaryStatus === "saved" ||
+            summaryStatus === "error") && (
+            <div style={{ marginTop: 10, fontSize: 13, opacity: 0.92 }}>
+              {summaryStatus === "saving" && "⏳ Guardando resumen de la entrevista…"}
+              {summaryStatus === "saved" && "✅ Resumen guardado correctamente."}
+              {summaryStatus === "error" && (
+                <span>❌ No se pudo guardar el resumen. {summaryErrorMsg}</span>
+              )}
+            </div>
+          )}
 
           {!!debug && !IS_PROD && (
             <p style={{ marginTop: 10, fontSize: 13, opacity: 0.9, maxWidth: 720 }}>
