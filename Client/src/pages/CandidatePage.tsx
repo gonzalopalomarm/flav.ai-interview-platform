@@ -243,6 +243,7 @@ const CandidatePage: React.FC = () => {
 
       // reset guardado summary
       hasSavedRef.current = false;
+      setIsSummarizing(false);
 
       setConnectingMsg(
         "Tu entrevistador se está uniendo a la llamada. Por favor espere unos breves instantes y asegúrese de tener una conexión estable a internet."
@@ -300,7 +301,8 @@ const CandidatePage: React.FC = () => {
 
       const handleLoadedData = () => {
         setIsConnecting(false);
-        // 🔊 Asegura audio
+
+        // 🔊 intenta forzar audio (si el navegador lo permite)
         videoEl.muted = false;
         videoEl.volume = 1;
       };
@@ -348,7 +350,7 @@ const CandidatePage: React.FC = () => {
     return String(json?.text || "").trim();
   }
 
-  // ✅ NUEVO: genera resumen individual cuando termina la entrevista
+  // ✅ Genera resumen individual al terminar
   async function buildInterviewSummary(fullConversation: string) {
     const prompt = `
 Actúa como un/a profesional senior en sociología y estudios cualitativos, con amplia experiencia en Voice of the Customer y análisis de experiencia de cliente en restauración.
@@ -452,8 +454,7 @@ Instrucciones para tu siguiente respuesta:
         hasSavedRef.current = true;
         setIsSummarizing(true);
 
-        // En prod no mostramos debug, pero en dev te sirve
-        setDebug("Generando y guardando el resumen…");
+        if (!IS_PROD) setDebug("Generando y guardando el resumen…");
 
         const summary = await buildInterviewSummary(conversation);
         if (cancelled) return;
@@ -461,7 +462,7 @@ Instrucciones para tu siguiente respuesta:
         await saveSummaryToBackend(interviewToken, summary, conversation);
         if (cancelled) return;
 
-        setDebug("✅ Resumen guardado correctamente.");
+        if (!IS_PROD) setDebug("✅ Resumen guardado correctamente.");
       } catch (e: any) {
         console.error(e);
         hasSavedRef.current = false; // permite reintentar
