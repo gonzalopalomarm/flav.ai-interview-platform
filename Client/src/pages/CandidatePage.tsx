@@ -96,16 +96,19 @@ const CandidatePage: React.FC = () => {
 
   const [script, setScript] = useState<InterviewScript | null>(null);
   const [conversation, setConversation] = useState("");
+  const conversationRef = useRef(""); // ✅ SIEMPRE la última conversación
+  useEffect(() => {
+    conversationRef.current = conversation;
+  }, [conversation]);
+
   const [questionIndex, setQuestionIndex] = useState(0);
   const [isFinished, setIsFinished] = useState(false);
 
   const [isSummarizing, setIsSummarizing] = useState(false);
   const hasSavedRef = useRef(false);
 
-  // ✅ NUEVO: estado visible SIEMPRE (también en PROD)
-  const [summaryStatus, setSummaryStatus] = useState<
-    "idle" | "saving" | "saved" | "error"
-  >("idle");
+  // ✅ estado visible SIEMPRE (también en PROD)
+  const [summaryStatus, setSummaryStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [summaryErrorMsg, setSummaryErrorMsg] = useState<string>("");
 
   const [isRecording, setIsRecording] = useState(false);
@@ -153,9 +156,7 @@ const CandidatePage: React.FC = () => {
 
         if (!interviewToken) {
           if (cancelled) return;
-          setConfigError(
-            "Falta el identificador de entrevista en la URL. Pide un nuevo enlace al equipo."
-          );
+          setConfigError("Falta el identificador de entrevista en la URL. Pide un nuevo enlace al equipo.");
           setIsLoadingConfig(false);
           return;
         }
@@ -183,11 +184,7 @@ const CandidatePage: React.FC = () => {
         const cfg = json.config as StoredConfig;
 
         if (cancelled) return;
-        setScript({
-          objective: cfg.objective,
-          tone: cfg.tone,
-          questions: cfg.questions,
-        });
+        setScript({ objective: cfg.objective, tone: cfg.tone, questions: cfg.questions });
         setAvatarId(cfg.avatarId);
         setVoiceId(cfg.voiceId);
 
@@ -280,8 +277,7 @@ const CandidatePage: React.FC = () => {
       setStream(avatar.current!.mediaStream);
 
       const firstQuestion = script.questions[0];
-      const opening =
-        "Hola, gracias por tu tiempo. Vamos a comenzar la entrevista. " + (firstQuestion || "");
+      const opening = "Hola, gracias por tu tiempo. Vamos a comenzar la entrevista. " + (firstQuestion || "");
       setConversation(`Entrevistador: ${opening}`);
 
       try {
@@ -291,9 +287,7 @@ const CandidatePage: React.FC = () => {
         });
       } catch (e: any) {
         console.warn("⚠️ HeyGen speak inicial falló (no bloqueamos la sesión):", e);
-        setDebug(
-          "⚠️ El avatar se ha iniciado, pero el primer mensaje falló. Pulsa Start otra vez si no habla."
-        );
+        setDebug("⚠️ El avatar se ha iniciado, pero el primer mensaje falló. Pulsa Start otra vez si no habla.");
       }
     } catch (err: any) {
       console.error("Error al iniciar avatar:", err);
@@ -319,9 +313,7 @@ const CandidatePage: React.FC = () => {
 
       const handleError = () => {
         setIsConnecting(false);
-        setDebug(
-          "No se pudo cargar el vídeo del entrevistador. Revisa tu conexión e inténtalo de nuevo."
-        );
+        setDebug("No se pudo cargar el vídeo del entrevistador. Revisa tu conexión e inténtalo de nuevo.");
       };
 
       videoEl.onloadeddata = handleLoadedData;
@@ -447,54 +439,42 @@ Instrucciones para tu siguiente respuesta:
     });
   }
 
-  // ✅ Al terminar: generar + guardar resumen UNA vez (con estado visible en PROD)
+  // ✅ FIX: Al terminar -> generar + guardar UNA vez (SIN auto-cancelarse)
   useEffect(() => {
-    let cancelled = false;
+    if (!isFinished) return;
+    if (!interviewToken) return;
+    if (hasSavedRef.current) return;
 
-    const run = async () => {
+    const conv = (conversationRef.current || "").trim();
+    if (conv.length < 30) return;
+
+    hasSavedRef.current = true;
+    setIsSummarizing(true);
+    setSummaryStatus("saving");
+    setSummaryErrorMsg("");
+
+    (async () => {
       try {
-        if (!isFinished) return;
-        if (!interviewToken) return;
-        if (hasSavedRef.current) return;
-        if (isSummarizing) return;
-
-        // evita guardar vacío
-        if (!conversation || conversation.trim().length < 30) return;
-
-        hasSavedRef.current = true;
-        setIsSummarizing(true);
-        setSummaryStatus("saving");
-        setSummaryErrorMsg("");
-
         if (!IS_PROD) setDebug("Generando y guardando el resumen…");
 
-        const summary = await buildInterviewSummary(conversation);
-        if (cancelled) return;
+        const summary = await buildInterviewSummary(conv);
 
-        await saveSummaryToBackend(interviewToken, summary, conversation);
-        if (cancelled) return;
+        // ✅ ESTA ES LA LLAMADA QUE ANTES NUNCA LLEGABA A EJECUTARSE
+        await saveSummaryToBackend(interviewToken, summary, conv);
 
         setSummaryStatus("saved");
         if (!IS_PROD) setDebug("✅ Resumen guardado correctamente.");
       } catch (e: any) {
         console.error("❌ Error generando/guardando el resumen:", e);
         hasSavedRef.current = false; // permite reintentar
-
         setSummaryStatus("error");
         setSummaryErrorMsg(e?.message || "Error guardando el resumen.");
-
         setDebug(e?.message || "❌ Error generando/guardando el resumen.");
       } finally {
-        if (!cancelled) setIsSummarizing(false);
+        setIsSummarizing(false);
       }
-    };
-
-    run();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isFinished, interviewToken, conversation, isSummarizing]);
+    })();
+  }, [isFinished, interviewToken]);
 
   // ✅ Whisper via BACKEND
   async function transcribeOnBackend(audioBlob: Blob) {
@@ -641,10 +621,8 @@ Instrucciones para tu siguiente respuesta:
             </button>
           </div>
 
-          {/* ✅ NUEVO: estado del resumen visible SIEMPRE (también en PROD) */}
-          {(summaryStatus === "saving" ||
-            summaryStatus === "saved" ||
-            summaryStatus === "error") && (
+          {/* ✅ estado del resumen visible SIEMPRE */}
+          {(summaryStatus === "saving" || summaryStatus === "saved" || summaryStatus === "error") && (
             <div style={{ marginTop: 10, fontSize: 13, opacity: 0.92 }}>
               {summaryStatus === "saving" && "⏳ Guardando resumen de la entrevista…"}
               {summaryStatus === "saved" && "✅ Resumen guardado correctamente."}
@@ -660,7 +638,6 @@ Instrucciones para tu siguiente respuesta:
             </p>
           )}
 
-          {/* Avatar debajo de botones */}
           <div className="MediaPlayer" style={{ marginTop: 22 }}>
             <div className="AvatarFrame">
               <video ref={mediaStream} className="AvatarVideo" playsInline autoPlay />
