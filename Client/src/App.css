@@ -385,3 +385,9 @@ h3 {
   color: var(--muted);
   line-height: 1.4;
 }
+
+.CandidateHero .MediaPlayer {
+  width: 100%;
+  display: flex;
+  justify-content: flex-start;
+}

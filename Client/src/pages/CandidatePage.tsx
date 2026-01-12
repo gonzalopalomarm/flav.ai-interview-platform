@@ -45,7 +45,11 @@ Reglas:
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // POST seguro al backend para guardar summary
-async function saveSummaryToBackend(interviewId: string, summary: string, rawConversation?: string) {
+async function saveSummaryToBackend(
+  interviewId: string,
+  summary: string,
+  rawConversation?: string
+) {
   const res = await fetch(`${API_BASE}/api/save-summary`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -104,7 +108,7 @@ const CandidatePage: React.FC = () => {
   // ✅ NUEVO: overlay “tu entrevistador se está uniendo…”
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectingMsg, setConnectingMsg] = useState(
-    "Tu entrevistador se está uniendo a la llamada. Por favor espere unos breves instantes y asegúrese de tener una conexión estable a internet."
+    "Tu entrevistador se está uniendo a la llamada. Por favor espere unos breves instantes y asegúrese de tener una conexión estable a internet. Si no funciona, refresque la página del navegador y vuelva a internarlo."
   );
 
   // =====================================================
@@ -116,7 +120,6 @@ const CandidatePage: React.FC = () => {
     window.fetch = async (input: any, init?: any) => {
       try {
         if (typeof input === "string" && input.startsWith("https://api.heygen.com/")) {
-          // https://api.heygen.com/v1/xxx  ->  {API_BASE}/api/heygen/v1/xxx
           const proxied = `${API_BASE}/api/heygen${input.replace("https://api.heygen.com", "")}`;
           return originalFetch(proxied, init);
         }
@@ -143,7 +146,9 @@ const CandidatePage: React.FC = () => {
 
         if (!interviewToken) {
           if (cancelled) return;
-          setConfigError("Falta el identificador de entrevista en la URL. Pide un nuevo enlace al equipo.");
+          setConfigError(
+            "Falta el identificador de entrevista en la URL. Pide un nuevo enlace al equipo."
+          );
           setIsLoadingConfig(false);
           return;
         }
@@ -201,7 +206,6 @@ const CandidatePage: React.FC = () => {
     const stopTalkCallback = (e: any) => console.log("Avatar stopped talking", e);
 
     if (!avatar.current) {
-      // ✅ IMPORTANTE: Token dummy. El Authorization REAL lo pone el backend en /api/heygen/*
       avatar.current = new StreamingAvatarApi(
         new Configuration({
           accessToken: "proxy",
@@ -236,7 +240,6 @@ const CandidatePage: React.FC = () => {
 
       if (!avatarId || !voiceId) return setDebug("Hay un problema con la configuración del avatar.");
 
-      // ✅ NUEVO: mostramos overlay desde el click
       setConnectingMsg(
         "Tu entrevistador se está uniendo a la llamada. Por favor espere unos breves instantes y asegúrese de tener una conexión estable a internet."
       );
@@ -262,10 +265,10 @@ const CandidatePage: React.FC = () => {
       setStream(avatar.current!.mediaStream);
 
       const firstQuestion = script.questions[0];
-      const opening = "Hola, gracias por tu tiempo. Vamos a comenzar la entrevista. " + (firstQuestion || "");
+      const opening =
+        "Hola, gracias por tu tiempo. Vamos a comenzar la entrevista. " + (firstQuestion || "");
       setConversation(`Entrevistador: ${opening}`);
 
-      // Hablar (con delay). Si falla, no rompemos.
       try {
         await sleep(600);
         await avatar.current!.speak({
@@ -273,12 +276,13 @@ const CandidatePage: React.FC = () => {
         });
       } catch (e: any) {
         console.warn("⚠️ HeyGen speak inicial falló (no bloqueamos la sesión):", e);
-        setDebug("⚠️ El avatar se ha iniciado, pero el primer mensaje falló. Pulsa Start otra vez si no habla.");
+        setDebug(
+          "⚠️ El avatar se ha iniciado, pero el primer mensaje falló. Pulsa Start otra vez si no habla."
+        );
       }
     } catch (err: any) {
       console.error("Error al iniciar avatar:", err);
       setDebug("Ha ocurrido un problema al iniciar el avatar.");
-      // ✅ NUEVO: si falla, quitamos overlay
       setIsConnecting(false);
     }
   }
@@ -290,7 +294,6 @@ const CandidatePage: React.FC = () => {
 
       videoEl.srcObject = stream;
 
-      // ✅ Cuando realmente hay datos de vídeo, el “entrevistador ya está”
       const handleLoadedData = () => {
         setIsConnecting(false);
       };
@@ -304,9 +307,7 @@ const CandidatePage: React.FC = () => {
       videoEl.onerror = handleError as any;
 
       videoEl.onloadedmetadata = () => {
-        videoEl.play().catch(() => {
-          // si el navegador bloquea autoplay, no reventamos
-        });
+        videoEl.play().catch(() => {});
       };
 
       return () => {
@@ -392,7 +393,6 @@ Instrucciones para tu siguiente respuesta:
     });
   }
 
-  // ✅ Whisper via BACKEND
   async function transcribeOnBackend(audioBlob: Blob) {
     const formData = new FormData();
     formData.append("file", audioBlob, "audio.webm");
@@ -490,7 +490,6 @@ Instrucciones para tu siguiente respuesta:
 
   return (
     <div className="HeyGenStreamingAvatar">
-      {/* ✅ NUEVO: Overlay de conexión */}
       {isConnecting && (
         <div className="ConnectingOverlay" role="status" aria-live="polite">
           <div className="ConnectingBox">
@@ -526,39 +525,38 @@ Instrucciones para tu siguiente respuesta:
             </button>
           </div>
 
-          {/* ✅ Solución A: debug NO visible en producción */}
           {!!debug && !IS_PROD && (
             <p style={{ marginTop: 10, fontSize: 13, opacity: 0.9, maxWidth: 720 }}>
               {debug}
             </p>
           )}
-        </div>
 
-<div className="MediaPlayer" style={{ marginTop: 22 }}>
-  <div className="AvatarFrame">
-    <video
-      ref={mediaStream}
-      className="AvatarVideo"
-      playsInline
-      autoPlay
-      muted
-    />
+          {/* ✅ MOVIDO: el avatar queda debajo de los botones */}
+          <div className="MediaPlayer" style={{ marginTop: 22 }}>
+            <div className="AvatarFrame">
+              <video
+                ref={mediaStream}
+                className="AvatarVideo"
+                playsInline
+                autoPlay
+                muted
+              />
 
-    {isFinished && (
-      <div className="AvatarOverlay" role="status" aria-live="polite">
-        <div className="AvatarOverlayBox">
-          <div className="AvatarOverlayTitle">✅ Entrevista finalizada ✅</div>
-          <div className="AvatarOverlayText">
-            Muchas gracias por tu tiempo
-            <br />
-            Ya puedes cerrar esta pestaña del navegador
+              {isFinished && (
+                <div className="AvatarOverlay" role="status" aria-live="polite">
+                  <div className="AvatarOverlayBox">
+                    <div className="AvatarOverlayTitle">✅ Entrevista finalizada ✅</div>
+                    <div className="AvatarOverlayText">
+                      Muchas gracias por tu tiempo
+                      <br />
+                      Ya puedes cerrar esta pestaña del navegador
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>
-    )}
-  </div>
-</div>
-
       </header>
     </div>
   );
