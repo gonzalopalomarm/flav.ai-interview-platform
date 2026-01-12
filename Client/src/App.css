@@ -258,3 +258,68 @@ button {
 h3 {
   margin-top: 20px;
 }
+
+/* =========================
+   HeyGen Connecting Overlay
+   ========================= */
+.ConnectingOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(10px);
+}
+
+.ConnectingBox {
+  width: min(560px, calc(100vw - 32px));
+  border-radius: 18px;
+  padding: 22px 22px;
+
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+
+  box-shadow:
+    0 18px 60px rgba(0, 0, 0, 0.45),
+    0 8px 22px rgba(255, 40, 40, 0.18);
+
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: center;
+}
+
+.ConnectingTitle {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.2px;
+}
+
+.ConnectingText {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.ConnectingSpinner {
+  width: 38px;
+  height: 38px;
+  margin: 4px auto 8px;
+  border-radius: 999px;
+
+  border: 3px solid rgba(255, 255, 255, 0.16);
+  border-top-color: rgba(255, 77, 77, 0.95);
+
+  animation: ConnectingSpin 0.9s linear infinite;
+}
+
+@keyframes ConnectingSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}

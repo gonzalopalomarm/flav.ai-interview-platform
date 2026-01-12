@@ -101,8 +101,14 @@ const CandidatePage: React.FC = () => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
+  // ✅ NUEVO: overlay “tu entrevistador se está uniendo…”
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectingMsg, setConnectingMsg] = useState(
+    "Tu entrevistador se está uniendo a la llamada. Por favor espere unos breves instantes y asegúrese de tener una conexión estable a internet."
+  );
+
   // =====================================================
-  // ✅ 0) PROXY HeyGen (arregla CORS del SDK sin reescribirlo)
+  // ✅ 0) PROXY HeyGen (arregla CORS del SDK sin reescribirlo).
   // =====================================================
   useEffect(() => {
     const originalFetch = window.fetch.bind(window);
@@ -187,19 +193,21 @@ const CandidatePage: React.FC = () => {
     };
   }, [interviewToken]);
 
-  // Inicialización avatar (HeyGen)
+  // =====================================================
+  // ✅ Inicialización avatar (HeyGen) - SIN API KEY EN CLIENT
+  // =====================================================
   useEffect(() => {
     const startTalkCallback = (e: any) => console.log("Avatar started talking", e);
     const stopTalkCallback = (e: any) => console.log("Avatar stopped talking", e);
 
     if (!avatar.current) {
-      const heygenKey = process.env.REACT_APP_HEYGEN_API_KEY;
-      if (!heygenKey) {
-        console.error("Falta REACT_APP_HEYGEN_API_KEY en el .env de Client.");
-        return;
-      }
+      // ✅ IMPORTANTE: Token dummy. El Authorization REAL lo pone el backend en /api/heygen/*
+      avatar.current = new StreamingAvatarApi(
+        new Configuration({
+          accessToken: "proxy",
+        } as any)
+      );
 
-      avatar.current = new StreamingAvatarApi(new Configuration({ accessToken: heygenKey }));
       avatar.current.addEventHandler("avatar_start_talking", startTalkCallback);
       avatar.current.addEventHandler("avatar_stop_talking", stopTalkCallback);
     }
@@ -219,12 +227,20 @@ const CandidatePage: React.FC = () => {
       if (isRecording) return setDebug("Primero detén la grabación antes de iniciar de nuevo.");
 
       if (!avatar.current) {
-        const heygenKey = process.env.REACT_APP_HEYGEN_API_KEY;
-        if (!heygenKey) return setDebug("Falta REACT_APP_HEYGEN_API_KEY en el .env de Client.");
-        avatar.current = new StreamingAvatarApi(new Configuration({ accessToken: heygenKey }));
+        avatar.current = new StreamingAvatarApi(
+          new Configuration({
+            accessToken: "proxy",
+          } as any)
+        );
       }
 
       if (!avatarId || !voiceId) return setDebug("Hay un problema con la configuración del avatar.");
+
+      // ✅ NUEVO: mostramos overlay desde el click
+      setConnectingMsg(
+        "Tu entrevistador se está uniendo a la llamada. Por favor espere unos breves instantes y asegúrese de tener una conexión estable a internet."
+      );
+      setIsConnecting(true);
 
       setIsFinished(false);
       setConversation("");
@@ -262,15 +278,41 @@ const CandidatePage: React.FC = () => {
     } catch (err: any) {
       console.error("Error al iniciar avatar:", err);
       setDebug("Ha ocurrido un problema al iniciar el avatar.");
+      // ✅ NUEVO: si falla, quitamos overlay
+      setIsConnecting(false);
     }
   }
 
   // Cargar el video stream en el <video>
   useEffect(() => {
     if (stream && mediaStream.current) {
-      mediaStream.current.srcObject = stream;
-      mediaStream.current.onloadedmetadata = () => {
-        mediaStream.current!.play();
+      const videoEl = mediaStream.current;
+
+      videoEl.srcObject = stream;
+
+      // ✅ Cuando realmente hay datos de vídeo, el “entrevistador ya está”
+      const handleLoadedData = () => {
+        setIsConnecting(false);
+      };
+
+      const handleError = () => {
+        setIsConnecting(false);
+        setDebug("No se pudo cargar el vídeo del entrevistador. Revisa tu conexión e inténtalo de nuevo.");
+      };
+
+      videoEl.onloadeddata = handleLoadedData;
+      videoEl.onerror = handleError as any;
+
+      videoEl.onloadedmetadata = () => {
+        videoEl.play().catch(() => {
+          // si el navegador bloquea autoplay, no reventamos
+        });
+      };
+
+      return () => {
+        videoEl.onloadeddata = null;
+        videoEl.onerror = null;
+        videoEl.onloadedmetadata = null;
       };
     }
   }, [stream]);
@@ -448,6 +490,17 @@ Instrucciones para tu siguiente respuesta:
 
   return (
     <div className="HeyGenStreamingAvatar">
+      {/* ✅ NUEVO: Overlay de conexión */}
+      {isConnecting && (
+        <div className="ConnectingOverlay" role="status" aria-live="polite">
+          <div className="ConnectingBox">
+            <div className="ConnectingSpinner" />
+            <div className="ConnectingTitle">Tu entrevistador se está uniendo a la llamada</div>
+            <div className="ConnectingText">{connectingMsg}</div>
+          </div>
+        </div>
+      )}
+
       <header className="App-header">
         <div className="CandidateHero">
           <h1 style={{ marginTop: 14 }}>Entrevista experiencia</h1>
@@ -459,15 +512,15 @@ Instrucciones para tu siguiente respuesta:
           </p>
 
           <div className="CandidateButtonsRow">
-            <button className="PrimaryFlavButton" onClick={grab} disabled={isFinished}>
-              Start
+            <button className="PrimaryFlavButton" onClick={grab} disabled={isFinished || isConnecting}>
+              {isConnecting ? "Conectando…" : "Start"}
             </button>
 
             <button
               className="PrimaryFlavButton"
               onClick={isRecording ? stopRecording : startRecording}
-              disabled={voiceDisabled}
-              title={voiceDisabled ? "Primero pulsa Start" : undefined}
+              disabled={voiceDisabled || isConnecting}
+              title={voiceDisabled ? "Primero pulsa Start" : isConnecting ? "Conectando…" : undefined}
             >
               {isRecording ? "🔴 Detener grabación" : "🎤 Responder por voz"}
             </button>
