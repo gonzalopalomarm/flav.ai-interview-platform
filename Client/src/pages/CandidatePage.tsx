@@ -534,7 +534,7 @@ Instrucciones para tu siguiente respuesta:
           )}
         </div>
 
-<<div className="MediaPlayer" style={{ marginTop: 22 }}>
+<div className="MediaPlayer" style={{ marginTop: 22 }}>
   <div className="VideoWrapper">
     <video
       playsInline
