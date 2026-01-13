@@ -461,47 +461,61 @@ Instrucciones para tu siguiente respuesta:
     });
   }
 
-  // ✅ Al terminar: generar + guardar resumen UNA vez
+    // ✅ Al terminar: generar + guardar resumen UNA vez (ROBUSTO)
+  const isSavingRef = useRef(false);
+
   useEffect(() => {
     let cancelled = false;
 
     const run = async () => {
-      // 🔎 LOG SIEMPRE (clave para ver por qué NO guarda)
+      // 🔎 log de control (lo verás siempre)
       console.log("🔎 saveSummary check", {
         apiBase: API_BASE,
         isFinished,
         interviewToken,
         hasSaved: hasSavedRef.current,
-        isSummarizing,
+        isSaving: isSavingRef.current,
         convLen: conversation?.length || 0,
       });
 
       try {
         if (!isFinished) return;
         if (!interviewToken) return;
-        if (hasSavedRef.current) return;
-        if (isSummarizing) return;
 
-        // ✅ FIX: NO bloquees por entrevistas cortas (antes era <30)
-        if (!conversation || conversation.trim().length < 5) {
-          console.warn("⚠️ No guardo porque conversación demasiado corta", { len: conversation?.length || 0 });
+        // ✅ si ya se guardó, no repetimos
+        if (hasSavedRef.current) return;
+
+        // ✅ si ya hay un guardado en curso, no duplicamos
+        if (isSavingRef.current) return;
+
+        if (!conversation || conversation.trim().length < 30) {
+          console.warn("⚠️ No guardo: conversación demasiado corta.");
           return;
         }
 
-        hasSavedRef.current = true;
+        // ⛔️ IMPORTANTE: NO marcar hasSaved aquí
+        isSavingRef.current = true;
         setIsSummarizing(true);
         setSummaryStatus("saving");
         setSummaryErrorMsg("");
 
-        if (!IS_PROD) setDebug("Generando y guardando el resumen…");
-        console.log("🧾 FIN entrevista -> generar resumen", { interviewToken, convLen: conversation.length });
+        console.log("🧾 FIN entrevista -> generar resumen", {
+          interviewToken,
+          convLen: conversation.length,
+        });
 
         const summary = await buildInterviewSummary(conversation);
         if (cancelled) return;
 
+        console.log("✅ Resumen generado. Ahora guardo en backend...", {
+          summaryLen: summary?.length || 0,
+        });
+
+        // 1) Intento normal
         try {
           await saveSummaryToBackend(interviewToken, summary, conversation);
         } catch (e1: any) {
+          // 2) Reintento (cold start / glitch)
           console.warn("⚠️ save-summary falló, reintentando…", e1?.message || e1);
           await sleep(1200);
           await saveSummaryToBackend(interviewToken, summary, conversation);
@@ -509,18 +523,24 @@ Instrucciones para tu siguiente respuesta:
 
         if (cancelled) return;
 
+        // ✅ SOLO aquí marcamos como guardado
+        hasSavedRef.current = true;
+
         setSummaryStatus("saved");
-        if (!IS_PROD) setDebug("✅ Resumen guardado correctamente.");
+        console.log("✅✅ Guardado confirmado en backend (/api/save-summary).");
       } catch (e: any) {
         console.error("❌ Error generando/guardando el resumen:", e);
+
+        // ✅ si falla, NO bloqueamos futuros reintentos
         hasSavedRef.current = false;
 
         setSummaryStatus("error");
         setSummaryErrorMsg(e?.message || "Error guardando el resumen.");
-
-        setDebug(e?.message || "❌ Error generando/guardando el resumen.");
       } finally {
-        if (!cancelled) setIsSummarizing(false);
+        if (!cancelled) {
+          isSavingRef.current = false;
+          setIsSummarizing(false);
+        }
       }
     };
 
@@ -528,7 +548,7 @@ Instrucciones para tu siguiente respuesta:
     return () => {
       cancelled = true;
     };
-  }, [isFinished, interviewToken, conversation, isSummarizing]);
+  }, [isFinished, interviewToken, conversation]);
 
   // ✅ Whisper via BACKEND (con timeout)
   async function transcribeOnBackend(audioBlob: Blob) {
