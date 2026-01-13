@@ -534,7 +534,7 @@ const ResultsGroupPage: React.FC = () => {
             textAlign: "left",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "space-between", flexWrapwrap: "wrap", flexWrap: "wrap" as any }}>
+<div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "space-between", flexWrap: "wrap" }}>
             <h2 style={{ marginTop: 0, marginBottom: 10 }}>🧠 Informe global del grupo</h2>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
