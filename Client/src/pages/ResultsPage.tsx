@@ -2,7 +2,47 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+// ✅ ResultsPage (admin-only)
 const API_BASE = (process.env.REACT_APP_API_BASE_URL || "http://localhost:3001").trim();
+const ADMIN_TOKEN_KEY = "flavaai-admin-token";
+
+function getAdminToken(): string {
+  return String(localStorage.getItem(ADMIN_TOKEN_KEY) || "").trim();
+}
+
+function mergeHeaders(init?: RequestInit): Record<string, string> {
+  const base: Record<string, string> = {};
+  if (init?.headers) {
+    const h = new Headers(init.headers as any);
+    h.forEach((v, k) => (base[k] = v));
+  }
+  return base;
+}
+
+async function adminFetch(url: string, init: RequestInit = {}) {
+  const token = getAdminToken();
+
+  const headers: Record<string, string> = {
+    ...mergeHeaders(init),
+    Accept: "application/json",
+    ...(token ? { "x-admin-token": token } : {}),
+  };
+
+  // debug fuerte
+  console.log("adminFetch =>", {
+    url,
+    method: init.method || "GET",
+    hasToken: !!token,
+    tokenLen: token.length,
+    apiBase: API_BASE,
+  });
+
+  return fetch(url, {
+    ...init,
+    headers,
+    cache: "no-store",
+  });
+}
 
 type SummaryResponse = {
   interviewId: string;
@@ -38,8 +78,7 @@ const ResultsPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SummaryResponse | null>(null);
 
-  // 👇 Debug visible para ver si el build usa un API_BASE raro (muy común)
-  const [debug, setDebug] = useState("");
+  const adminTokenLen = getAdminToken().length;
 
   useEffect(() => {
     let cancelled = false;
@@ -55,34 +94,27 @@ const ResultsPage: React.FC = () => {
       setError(null);
       setData(null);
 
-      setDebug(
-        `API_BASE="${API_BASE}" | request="${requestUrl}" | origin="${window.location.origin}"`
-      );
+      // si no hay token admin, te lo digo claro (tu server responderá 401)
+      if (!getAdminToken()) {
+        setError("Falta el admin token en localStorage. Ve a /admin y vuelve a intentarlo.");
+        setLoading(false);
+        return;
+      }
 
-      // 1) Intento BACKEND
       try {
-        const res = await fetch(requestUrl, {
-          method: "GET",
-          cache: "no-store",
-          headers: {
-            Accept: "application/json",
-          },
-        });
+        const res = await adminFetch(requestUrl, { method: "GET" });
 
         const text = await res.text().catch(() => "");
         const parsed = safeJsonParse<SummaryResponse | SummaryResponse[] | { error?: string }>(text);
 
         if (!res.ok) {
-          const msg =
-            (parsed as any)?.error ||
-            text ||
-            `No se ha encontrado ningún resumen (HTTP ${res.status}).`;
+          const msg = (parsed as any)?.error || text || `HTTP ${res.status}`;
           throw new Error(msg);
         }
 
         const entry = Array.isArray(parsed) ? (parsed[0] as SummaryResponse) : (parsed as SummaryResponse);
 
-        if (!entry || !entry.summary) {
+        if (!entry?.summary?.trim()) {
           throw new Error("El backend respondió, pero no hay 'summary' en la respuesta.");
         }
 
@@ -90,7 +122,6 @@ const ResultsPage: React.FC = () => {
 
         setData(entry);
 
-        // ✅ Cache local (una sola vez)
         try {
           const cache: IndividualSummaryCache = {
             interviewId: token,
@@ -102,9 +133,8 @@ const ResultsPage: React.FC = () => {
         } catch {}
 
         setLoading(false);
-        return;
       } catch (e: any) {
-        // 2) Fallback: localStorage (si existiera)
+        // fallback local
         try {
           const raw = localStorage.getItem(`interview-summary-${token}`);
           const cached = raw ? safeJsonParse<IndividualSummaryCache>(raw) : null;
@@ -119,26 +149,20 @@ const ResultsPage: React.FC = () => {
               rawConversation: cached.rawConversation,
             });
 
-            setError(
-              `⚠️ No pude cargar el resumen desde el backend. Mostrando copia local. Detalle: ${
-                e?.message || "Error"
-              }`
-            );
+            setError(`⚠️ No pude cargar el resumen del backend. Mostrando copia local. Detalle: ${e?.message || "Error"}`);
             setLoading(false);
             return;
           }
         } catch {}
 
         if (cancelled) return;
-
         console.error("Error cargando resumen:", e);
-        setError(e?.message || "Se ha producido un error al recuperar el resumen de la entrevista.");
+        setError(e?.message || "Se ha producido un error al recuperar el resumen");
         setLoading(false);
       }
     };
 
     run();
-
     return () => {
       cancelled = true;
     };
@@ -162,23 +186,15 @@ const ResultsPage: React.FC = () => {
           Token: <strong>{token}</strong>
         </p>
 
-        {!!debug && (
-          <p style={{ fontSize: 12, opacity: 0.55, marginTop: 0, marginBottom: 0 }}>
-            (debug) {debug}
-          </p>
-        )}
-
-        {data?.createdAt && (
-          <p style={{ fontSize: 13, opacity: 0.6, marginTop: 6 }}>
-            Generado el: {new Date(String(data.createdAt).replace(" ", "T")).toLocaleString()}
-          </p>
-        )}
+        <p style={{ fontSize: 12, opacity: 0.65, marginTop: 0, marginBottom: 0 }}>
+          (debug) API_BASE="{API_BASE}" · adminTokenLen={adminTokenLen}
+        </p>
 
         <p style={{ marginTop: 12 }}>
           <Link to="/">← Volver a Home</Link>
         </p>
 
-        {loading && <p style={{ marginTop: 24 }}>⏳ Cargando informe de la entrevista…</p>}
+        {loading && <p style={{ marginTop: 24 }}>⏳ Cargando informe…</p>}
 
         {error && !loading && (
           <div
@@ -188,7 +204,9 @@ const ResultsPage: React.FC = () => {
               borderRadius: 12,
               border: "1px solid #f97373",
               backgroundColor: "#451a1a",
-              maxWidth: 800,
+              maxWidth: 900,
+              width: "100%",
+              textAlign: "left",
             }}
           >
             <h3 style={{ marginTop: 0 }}>⚠️ No se ha podido cargar el resumen</h3>
@@ -211,6 +229,12 @@ const ResultsPage: React.FC = () => {
           >
             <h2 style={{ marginTop: 0, marginBottom: 12 }}>🧾 Informe cualitativo</h2>
 
+            {data?.createdAt && (
+              <p style={{ fontSize: 13, opacity: 0.7, marginTop: 0 }}>
+                Generado el: {new Date(String(data.createdAt).replace(" ", "T")).toLocaleString()}
+              </p>
+            )}
+
             <section
               style={{
                 marginTop: 16,
@@ -229,7 +253,7 @@ const ResultsPage: React.FC = () => {
               <section style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid #374151" }}>
                 <details>
                   <summary style={{ cursor: "pointer", fontSize: 15, fontWeight: 500 }}>
-                    💬 Ver transcripción completa de la entrevista
+                    💬 Ver transcripción completa
                   </summary>
                   <pre
                     style={{
