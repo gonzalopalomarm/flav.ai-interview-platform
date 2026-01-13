@@ -1,7 +1,47 @@
+// src/pages/ResultsGroupPage.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-const API_BASE = process.env.REACT_APP_API_BASE_URL || "http://localhost:3001";
+// ✅ ResultsGroupPage (admin-only)
+const API_BASE = (process.env.REACT_APP_API_BASE_URL || "http://localhost:3001").trim();
+const ADMIN_TOKEN_KEY = "flavaai-admin-token";
+
+function getAdminToken(): string {
+  return String(localStorage.getItem(ADMIN_TOKEN_KEY) || "").trim();
+}
+
+function mergeHeaders(init?: RequestInit): Record<string, string> {
+  const base: Record<string, string> = {};
+  if (init?.headers) {
+    const h = new Headers(init.headers as any);
+    h.forEach((v, k) => (base[k] = v));
+  }
+  return base;
+}
+
+async function adminFetch(url: string, init: RequestInit = {}) {
+  const token = getAdminToken();
+
+  const headers: Record<string, string> = {
+    ...mergeHeaders(init),
+    Accept: "application/json",
+    ...(token ? { "x-admin-token": token } : {}),
+  };
+
+  console.log("adminFetch =>", {
+    url,
+    method: init.method || "GET",
+    hasToken: !!token,
+    tokenLen: token.length,
+    apiBase: API_BASE,
+  });
+
+  return fetch(url, {
+    ...init,
+    headers,
+    cache: "no-store",
+  });
+}
 
 type StoredGroup = {
   groupId: string;
@@ -27,94 +67,6 @@ function safeParseJson<T>(raw: string | null): T | null {
   }
 }
 
-const GROUP_SYSTEM_PROMPT = `
-Actúa como un/a profesional senior en sociología y estudios cualitativos, con amplia experiencia en investigación cualitativa, Voice of the Customer y análisis de experiencia de cliente en restauración, así como en la elaboración de informes estratégicos para empresas e instituciones.
-
-Tu rol es elaborar un INFORME GLOBAL de investigación cualitativa a partir de múltiples entrevistas individuales a clientes, centradas exclusivamente en su experiencia en un restaurante (servicio, atención, ambiente, tiempos, interacción con el personal y percepción global).
-
-No estamos testando producto (comida o bebida de forma aislada), sino la experiencia completa del cliente en el restaurante.
-
-Asume que:
-- Cada entrevista ya ha sido analizada individualmente
-- Tu tarea es realizar una síntesis transversal del conjunto
-- Debes identificar patrones comunes, diferencias relevantes y tensiones entre discursos
-
-Cuando te proporcione el conjunto de entrevistas (o sus análisis individuales), deberás:
-
-1. RESUMEN EJECUTIVO GLOBAL  
-Elaborar un resumen ejecutivo claro y accionable, orientado a decisores:
-- Principales aprendizajes globales sobre la experiencia en restaurante  
-- Qué funciona de forma consistente y qué genera fricción  
-- Tensiones y contradicciones entre perfiles de clientes  
-- Insight clave que mejor explica la experiencia global  
-
-2. GRANDES INSIGHTS TRANSVERSALES  
-Identifica los insights cualitativos más relevantes:
-- Deben surgir de la repetición, recurrencia o fuerza del discurso  
-- Indica si cada insight es mayoritario, recurrente o puntual pero significativo  
-- Redáctalos como aprendizajes interpretativos, no como opiniones literales  
-- Conecta emociones, expectativas, comportamientos y decisiones  
-
-3. VERBATIMS REPRESENTATIVOS  
-Incluye verbatims seleccionados:
-- Representativos del conjunto de entrevistas  
-- Asociados claramente a cada insight  
-- Indicando, cuando aporte valor, si reflejan una opinión compartida o una tensión  
-- Evita verbatims aislados sin respaldo analítico  
-
-4. MAPA GLOBAL DE LA EXPERIENCIA EN RESTAURANTE  
-Construye una visión integrada del customer journey:
-- Antes de la visita  
-- Llegada y primera impresión  
-- Servicio y atención  
-- Gestión del tiempo y esperas  
-- Pago y cierre  
-- Recuerdo y predisposición a volver o recomendar  
-
-Para cada etapa:
-- Qué funciona  
-- Qué falla  
-- Qué genera emoción positiva o negativa  
-
-5. DIFERENCIAS Y TENSIONES ENTRE CLIENTES  
-Identifica diferencias relevantes en la experiencia:
-- Expectativas vs. realidad  
-- Clientes habituales vs. nuevos  
-- Sensibilidad al servicio, al tiempo o al trato  
-- Momentos donde no hay consenso  
-
-6. IMPLICACIONES ESTRATÉGICAS PRIORITARIAS  
-Traduce los hallazgos en implicaciones claras:
-- Para la mejora de la experiencia en restaurante  
-- Para operaciones, personal de sala, procesos o comunicación  
-- Distingue entre quick wins y cambios estructurales  
-- Prioriza según impacto potencial en satisfacción, fidelización y recomendación  
-
-7. APRENDIZAJES CLAVE PARA DECISIÓN  
-Resume:
-- 3–5 aprendizajes que un decisor debe recordar  
-- Qué no se debería ignorar  
-- Qué oportunidad clara emerge del conjunto  
-
-8. OBSERVACIONES METODOLÓGICAS  
-Incluye notas propias de investigación cualitativa:
-- Saturación de discursos detectada o no  
-- Límites del estudio  
-- Hipótesis emergentes a validar cuantitativamente  
-- Nuevas preguntas que surgen del análisis global  
-
-Estilo y tono:
-- Profesional, claro y estructurado  
-- Propio de informes de investigación cualitativa de alto nivel  
-- Interpretativo y sintético  
-- Sin jerga innecesaria ni frases genéricas  
-
-Asume que este informe será utilizado para tomar decisiones estratégicas sobre la experiencia en restaurante.
-Nivel de exigencia: consultora estratégica / instituto de investigación cualitativa.
-No actúes como un resumidor automático, sino como un/a analista experto/a que sintetiza y aporta visión estratégica.
-
-`.trim();
-
 const ResultsGroupPage: React.FC = () => {
   const params = useParams<{ groupId: string }>();
   const groupId = params.groupId ? decodeURIComponent(params.groupId) : "";
@@ -126,30 +78,19 @@ const ResultsGroupPage: React.FC = () => {
   const [summariesLoading, setSummariesLoading] = useState(false);
   const [summaries, setSummaries] = useState<Record<string, SummaryResponse | null>>({});
   const [missing, setMissing] = useState<string[]>([]);
-
-  // UI
   const [openAll, setOpenAll] = useState(false);
 
-  // Global (frontend)
   const [globalLoading, setGlobalLoading] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [globalText, setGlobalText] = useState<string>("");
 
-  // ✅ NUEVO: estado para controlar qué resumen se está eliminando
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const groupStorageKey = useMemo(() => {
-    return groupId ? `interview-group-${groupId}` : "";
-  }, [groupId]);
+  const adminTokenLen = getAdminToken().length;
 
-  const globalCacheKey = useMemo(() => {
-    return groupId ? `group-global-sum-${groupId}` : "";
-  }, [groupId]);
-
-  // ✅ NUEVO: persistimos “resúmenes eliminados” por grupo (fallback si no existe DELETE backend)
-  const hiddenSummariesKey = useMemo(() => {
-    return groupId ? `hidden-summaries-${groupId}` : "";
-  }, [groupId]);
+  const groupStorageKey = useMemo(() => (groupId ? `interview-group-${groupId}` : ""), [groupId]);
+  const globalCacheKey = useMemo(() => (groupId ? `group-global-sum-${groupId}` : ""), [groupId]);
+  const hiddenSummariesKey = useMemo(() => (groupId ? `hidden-summaries-${groupId}` : ""), [groupId]);
 
   function getHiddenSet(): Set<string> {
     if (!hiddenSummariesKey) return new Set();
@@ -173,14 +114,13 @@ const ResultsGroupPage: React.FC = () => {
   }
 
   async function loadGroup(): Promise<StoredGroup> {
-    // 1) Backend (si existe)
+    // IMPORTANTE: tu server NO tiene /api/group/:id, así que esto casi seguro 404 y cae a localStorage.
+    // Lo dejo pero no dependemos de ello.
     try {
-      const res = await fetch(`${API_BASE}/api/group/${encodeURIComponent(groupId)}`);
+      const res = await adminFetch(`${API_BASE}/api/group/${encodeURIComponent(groupId)}`);
       if (res.ok) {
         const g = (await res.json()) as StoredGroup;
-        if (!g?.groupId || !Array.isArray(g.interviewIds)) {
-          throw new Error("Grupo inválido devuelto por el servidor.");
-        }
+        if (!g?.groupId || !Array.isArray(g.interviewIds)) throw new Error("Grupo inválido devuelto por el servidor.");
         return {
           groupId: String(g.groupId),
           restaurantName: g.restaurantName ? String(g.restaurantName) : undefined,
@@ -190,10 +130,9 @@ const ResultsGroupPage: React.FC = () => {
         };
       }
     } catch {
-      // seguimos a fallback
+      // fallback
     }
 
-    // 2) Fallback: localStorage
     const raw = localStorage.getItem(groupStorageKey);
     const parsed = safeParseJson<StoredGroup>(raw);
     if (parsed?.groupId && Array.isArray(parsed.interviewIds) && parsed.interviewIds.length > 0) {
@@ -218,24 +157,38 @@ const ResultsGroupPage: React.FC = () => {
       const ids = g.interviewIds || [];
       if (ids.length === 0) return;
 
-      const hidden = getHiddenSet(); // ✅ NUEVO
+      if (!getAdminToken()) {
+        setMissing(ids);
+        setSummaries(Object.fromEntries(ids.map((id) => [id, null])));
+        setError("Falta el admin token en localStorage. Ve a /admin y vuelve a intentarlo.");
+        return;
+      }
+
+      const hidden = getHiddenSet();
 
       const results = await Promise.allSettled(
         ids.map(async (id) => {
-          // ✅ NUEVO: si se marcó como eliminado en esta UI, lo tratamos como inexistente
-          if (hidden.has(String(id))) return { id, data: null as SummaryResponse | null };
+          const sid = String(id);
+          if (hidden.has(sid)) return { id: sid, data: null as SummaryResponse | null };
 
-          const res = await fetch(`${API_BASE}/api/summary/${encodeURIComponent(id)}`);
-          if (!res.ok) return { id, data: null as SummaryResponse | null };
+          const url = `${API_BASE}/api/summary/${encodeURIComponent(sid)}`;
+          const res = await adminFetch(url, { method: "GET" });
 
-          const json = (await res.json()) as SummaryResponse | SummaryResponse[];
+          if (!res.ok) {
+            const txt = await res.text().catch(() => "");
+            console.warn("summary GET failed", sid, res.status, txt);
+            return { id: sid, data: null as SummaryResponse | null };
+          }
+
+          const json = (await res.json().catch(() => null)) as any;
           const entry = Array.isArray(json) ? json[0] : json;
-          if (!entry?.summary?.trim()) return { id, data: null as SummaryResponse | null };
+
+          if (!entry?.summary?.trim()) return { id: sid, data: null as SummaryResponse | null };
 
           return {
-            id,
+            id: sid,
             data: {
-              interviewId: String(entry.interviewId || id),
+              interviewId: String(entry.interviewId || sid),
               summary: String(entry.summary),
               rawConversation: entry.rawConversation ? String(entry.rawConversation) : undefined,
               createdAt: entry.createdAt ? String(entry.createdAt) : undefined,
@@ -263,62 +216,19 @@ const ResultsGroupPage: React.FC = () => {
     }
   }
 
-  function buildGlobalPrompt(g: StoredGroup, blocks: { id: string; summary: string }[]) {
-    const restaurantLabel = g.restaurantName ? `Restaurante: ${g.restaurantName}` : `Grupo: ${g.groupId}`;
-
-    return `
-${restaurantLabel}
-Nº entrevistas en el grupo: ${g.interviewIds.length}
-Nº entrevistas con resumen disponible: ${blocks.length}
-
-A continuación van los RESÚMENES INDIVIDUALES (uno por entrevista). Úsalos como única fuente de verdad:
-
-${blocks
-  .map(
-    (b, idx) => `
---- ENTREVISTA ${idx + 1} (${b.id}) ---
-${b.summary}
-`
-  )
-  .join("\n")}
-
-FORMATO DE SALIDA OBLIGATORIO:
-
-📌 0) Resumen ejecutivo (1 frase)
-- Una única frase muy clara sobre el estado general (experiencia, problemas, oportunidades).
-
-📌 1) Insights clave (6-10 bullets)
-- EMOJI + **titular** + 1-2 frases con contexto.
-- Indica si es patrón repetido o discrepancia.
-
-💬 2) Evidencias / citas representativas (5-8)
-- ➤ “cita” — (entrevista <id>)
-- Si no hay citas literales, convierte fragmentos en estilo cita sin inventar.
-
-🎯 3) Oportunidades / recomendaciones accionables (6-10)
-- ⬜️ Acción concreta + breve explicación (por qué/impacto).
-
-🎨 4) Mini “Persona Snapshot” global
-- Nombre ficticio
-- 3 adjetivos
-- Objetivos
-- Frustraciones
-
-⚠️ 5) Alertas / riesgos (opcional)
-- 3-5 bullets
-
-Importante:
-- Agrupa y prioriza, sin quedarte superficial.
-`.trim();
-  }
-
-  async function generateGlobalFromVisibleSummaries(refresh = false) {
+  async function generateGlobalFromServer(refresh = false) {
     if (!group) return;
 
     setGlobalError(null);
     setGlobalLoading(true);
 
     try {
+      if (!getAdminToken()) {
+        setGlobalText("");
+        setGlobalError("Falta el admin token en localStorage. Ve a /admin y vuelve a intentarlo.");
+        return;
+      }
+
       if (!refresh && globalCacheKey) {
         const cached = localStorage.getItem(globalCacheKey) || "";
         if (cached.trim()) {
@@ -327,56 +237,25 @@ Importante:
         }
       }
 
-      const apiKey = process.env.REACT_APP_OPENAI_API_KEY;
-      if (!apiKey) {
-        setGlobalError("Falta REACT_APP_OPENAI_API_KEY en el .env del Client.");
-        return;
-      }
-
-      const blocks = group.interviewIds
-        .map((id) => {
-          const s = summaries[id];
-          const text = s?.summary?.trim() ? String(s.summary).trim() : "";
-          return text ? { id, summary: text } : null;
-        })
-        .filter(Boolean) as { id: string; summary: string }[];
-
-      if (blocks.length === 0) {
-        setGlobalError("No hay resúmenes individuales disponibles arriba para construir el informe global.");
-        return;
-      }
-
       setGlobalText("⏳ Generando informe global…");
 
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-4.1-mini",
-          temperature: 0.4,
-          messages: [
-            { role: "system", content: GROUP_SYSTEM_PROMPT },
-            { role: "user", content: buildGlobalPrompt(group, blocks) },
-          ],
-        }),
-      });
+      const url =
+        `${API_BASE}/api/group-summary/${encodeURIComponent(group.groupId)}` + (refresh ? "?refresh=1" : "");
 
-      const json = await res.json();
+      const res = await adminFetch(url, { method: "GET" });
+      const json = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        const msg = json?.error?.message || `OpenAI error HTTP ${res.status}`;
+        const msg = (json as any)?.error || `HTTP ${res.status}`;
         setGlobalText("");
         setGlobalError(`No se pudo generar el informe global: ${msg}`);
         return;
       }
 
-      const text: string = json?.choices?.[0]?.message?.content?.trim() || "";
+      const text = String((json as any)?.summary || "").trim();
       if (!text) {
         setGlobalText("");
-        setGlobalError("OpenAI devolvió una respuesta vacía.");
+        setGlobalError("El backend devolvió un informe vacío.");
         return;
       }
 
@@ -390,7 +269,6 @@ Importante:
     }
   }
 
-  // ✅ NUEVO: eliminar resumen individual (token)
   async function deleteSummary(interviewId: string) {
     if (!group) return;
     const id = String(interviewId);
@@ -402,30 +280,14 @@ Importante:
     setError(null);
 
     try {
-      // Intento backend: DELETE /api/summary/:id
-      const res = await fetch(`${API_BASE}/api/summary/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      });
+      const res = await adminFetch(`${API_BASE}/api/summary/${encodeURIComponent(id)}`, { method: "DELETE" });
 
-      if (res.ok) {
-        // borrado real en servidor
-        removeHidden(id);
-      } else {
-        // fallback: lo ocultamos en UI (persistente) aunque el backend no permita borrar
-        addHidden(id);
-      }
+      if (res.ok) removeHidden(id);
+      else addHidden(id);
 
-      // UI inmediata: lo quitamos del estado
       setSummaries((prev) => ({ ...prev, [id]: null }));
+      setMissing((prev) => Array.from(new Set([...prev, id])));
 
-      // asegurar que aparezca en “faltan resúmenes”
-      setMissing((prev) => {
-        const s = new Set(prev);
-        s.add(id);
-        return Array.from(s);
-      });
-
-      // invalidar cache del informe global (para que no use resúmenes antiguos)
       if (globalCacheKey) {
         localStorage.removeItem(globalCacheKey);
         setGlobalText("");
@@ -506,6 +368,10 @@ Importante:
           📦 Grupo: <span style={{ fontWeight: 800 }}>{group.groupId}</span>
         </h1>
 
+        <p style={{ fontSize: 12, opacity: 0.7, marginTop: 0, marginBottom: 8 }}>
+          (debug) API_BASE="{API_BASE}" · adminTokenLen={adminTokenLen}
+        </p>
+
         <p style={{ opacity: 0.8, marginTop: 0 }}>
           {group.restaurantName ? (
             <>
@@ -550,15 +416,7 @@ Importante:
             textAlign: "left",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              justifyContent: "space-between",
-              flexWrap: "wrap",
-            }}
-          >
+          <div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "space-between", flexWrap: "wrap" }}>
             <h2 style={{ marginTop: 0, marginBottom: 10 }}>🧾 Resúmenes del grupo (desplegables)</h2>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -566,13 +424,7 @@ Importante:
                 {openAll ? "▾ Cerrar todos" : "▸ Abrir todos"}
               </button>
 
-              <button
-                className="PrimaryFlavButton"
-                onClick={async () => {
-                  await loadAllSummaries(group);
-                }}
-                disabled={summariesLoading}
-              >
+              <button className="PrimaryFlavButton" onClick={async () => loadAllSummaries(group)} disabled={summariesLoading}>
                 🔄 Recargar
               </button>
             </div>
@@ -592,7 +444,7 @@ Importante:
             >
               <strong>⚠️ Faltan resúmenes para:</strong> {missing.join(", ")}
               <div style={{ marginTop: 6, fontSize: 13, opacity: 0.85 }}>
-                (Si esas entrevistas aún no han terminado o no han guardado el summary en el backend, o si lo has eliminado.)
+                (Si esas entrevistas aún no han terminado, o si lo has eliminado.)
               </div>
             </div>
           )}
@@ -610,8 +462,7 @@ Importante:
                     borderRadius: 14,
                     overflow: "hidden",
                     border: "1px solid rgba(255,255,255,0.12)",
-                    background:
-                      "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))",
+                    background: "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))",
                   }}
                 >
                   <div
@@ -629,30 +480,17 @@ Importante:
                     <div style={{ fontWeight: 900 }}>
                       #{idx + 1} · {id}
                       {!hasSummary ? (
-                        <span style={{ marginLeft: 10, opacity: 0.75, fontWeight: 600 }}>
-                          (sin resumen)
-                        </span>
+                        <span style={{ marginLeft: 10, opacity: 0.75, fontWeight: 600 }}>(sin resumen)</span>
                       ) : null}
                     </div>
 
                     <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                      <a
-                        href={`/results/${encodeURIComponent(id)}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ opacity: 0.9, textDecoration: "none" }}
-                      >
+                      <a href={`/results/${encodeURIComponent(id)}`} target="_blank" rel="noreferrer" style={{ opacity: 0.9, textDecoration: "none" }}>
                         Abrir individual ↗
                       </a>
 
-                      {/* ✅ BOTÓN NUEVO */}
                       {hasSummary && (
-                        <button
-                          className="PrimaryFlavButton"
-                          onClick={() => deleteSummary(id)}
-                          disabled={deletingId === id}
-                          title="Eliminar el resumen"
-                        >
+                        <button className="PrimaryFlavButton" onClick={() => deleteSummary(id)} disabled={deletingId === id} title="Eliminar el resumen">
                           {deletingId === id ? "⏳ Eliminando…" : "🗑 Eliminar resumen"}
                         </button>
                       )}
@@ -660,15 +498,7 @@ Importante:
                   </div>
 
                   <details open={openAll} style={{ padding: 14 }}>
-                    <summary
-                      style={{
-                        cursor: "pointer",
-                        listStyle: "none",
-                        fontWeight: 800,
-                        opacity: 0.95,
-                        userSelect: "none",
-                      }}
-                    >
+                    <summary style={{ cursor: "pointer", listStyle: "none", fontWeight: 800, opacity: 0.95, userSelect: "none" }}>
                       {hasSummary ? "📄 Ver resumen" : "⚠️ No hay resumen guardado"}
                     </summary>
 
@@ -683,9 +513,7 @@ Importante:
                         lineHeight: 1.6,
                       }}
                     >
-                      {hasSummary
-                        ? s!.summary
-                        : "Todavía no existe summary para este token (o no se ha guardado en el backend, o lo has eliminado)."}
+                      {hasSummary ? s!.summary : "Todavía no existe summary para este token (o lo has eliminado)."}
                     </div>
                   </details>
                 </div>
@@ -693,7 +521,7 @@ Importante:
             })}
         </section>
 
-        {/* === INFORME GLOBAL (ABAJO) — 100% FRONTEND === */}
+        {/* === INFORME GLOBAL (SERVER-SIDE) === */}
         <section
           style={{
             marginTop: 18,
@@ -706,62 +534,28 @@ Importante:
             textAlign: "left",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              justifyContent: "space-between",
-              flexWrap: "wrap",
-            }}
-          >
+          <div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "space-between", flexWrapwrap: "wrap", flexWrap: "wrap" as any }}>
             <h2 style={{ marginTop: 0, marginBottom: 10 }}>🧠 Informe global del grupo</h2>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button
-                className="PrimaryFlavButton"
-                onClick={() => generateGlobalFromVisibleSummaries(false)}
-                disabled={globalLoading}
-              >
+              <button className="PrimaryFlavButton" onClick={() => generateGlobalFromServer(false)} disabled={globalLoading}>
                 ⚡ Generar
               </button>
-
-              <button
-                className="PrimaryFlavButton"
-                onClick={() => generateGlobalFromVisibleSummaries(true)}
-                disabled={globalLoading}
-              >
+              <button className="PrimaryFlavButton" onClick={() => generateGlobalFromServer(true)} disabled={globalLoading}>
                 🔁 Regenerar
               </button>
             </div>
           </div>
 
           <details open={false} style={{ padding: 2 }}>
-            <summary
-              style={{
-                cursor: "pointer",
-                listStyle: "none",
-                fontWeight: 900,
-                opacity: 0.95,
-                userSelect: "none",
-                padding: "8px 0",
-              }}
-            >
-              📌 Ver informe global (hecho con los resúmenes de arriba)
+            <summary style={{ cursor: "pointer", listStyle: "none", fontWeight: 900, opacity: 0.95, userSelect: "none", padding: "8px 0" }}>
+              📌 Ver informe global
             </summary>
 
             {globalLoading && <p style={{ opacity: 0.85, marginTop: 10 }}>⏳ Generando…</p>}
 
             {globalError && (
-              <div
-                style={{
-                  marginTop: 10,
-                  padding: 12,
-                  borderRadius: 12,
-                  border: "1px solid #f97373",
-                  backgroundColor: "#451a1a",
-                }}
-              >
+              <div style={{ marginTop: 10, padding: 12, borderRadius: 12, border: "1px solid #f97373", backgroundColor: "#451a1a" }}>
                 <strong>⚠️ {globalError}</strong>
               </div>
             )}
