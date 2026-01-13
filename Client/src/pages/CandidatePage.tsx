@@ -2,16 +2,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
-import {
-  Configuration,
-  NewSessionData,
-  StreamingAvatarApi,
-} from "@heygen/streaming-avatar";
+import { Configuration, NewSessionData, StreamingAvatarApi } from "@heygen/streaming-avatar";
 import "../App.css";
 
-const API_BASE = process.env.REACT_APP_API_BASE_URL || "http://localhost:3001";
+// ✅ FIX: si falta env en Render, usa PROD por defecto (NO localhost)
+const API_BASE = (process.env.REACT_APP_API_BASE_URL || "https://api.flavaai.com").trim();
 
-// ✅ Solución A: en producción NO mostramos debug al candidato
+// ✅ En producción NO mostramos debug al candidato
 const IS_PROD = process.env.NODE_ENV === "production";
 
 type StoredConfig = {
@@ -44,20 +41,6 @@ Reglas:
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string) {
-  const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), ms);
-
-  // Si el promise interno usa fetch, le pasamos signal aparte (lo hacemos abajo en fetchWithTimeout)
-  // Aquí sólo envolvemos por consistencia
-  return Promise.race([
-    promise.finally(() => clearTimeout(timeout)),
-    new Promise<T>((_resolve, reject) => {
-      ctrl.signal.addEventListener("abort", () => reject(new Error(`${label} timeout (${ms}ms)`)));
-    }),
-  ]);
-}
-
 async function fetchWithTimeout(url: string, init: RequestInit, ms: number, label: string) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), ms);
@@ -73,16 +56,16 @@ async function fetchWithTimeout(url: string, init: RequestInit, ms: number, labe
   }
 }
 
-// POST seguro al backend para guardar summary (con timeout + mensaje claro)
-async function saveSummaryToBackend(
-  interviewId: string,
-  summary: string,
-  rawConversation?: string
-) {
+// ✅ POST seguro al backend para guardar summary (con timeout + trazas)
+async function saveSummaryToBackend(interviewId: string, summary: string, rawConversation?: string) {
   const url = `${API_BASE}/api/save-summary`;
 
-  // 👇 importante para depurar en producción
-  console.log("➡️ saveSummaryToBackend POST", url, { interviewId, summaryLen: summary?.length });
+  console.log("➡️ saveSummaryToBackend POST", {
+    url,
+    interviewId,
+    summaryLen: summary?.length || 0,
+    rawLen: rawConversation?.length || 0,
+  });
 
   const res = await fetchWithTimeout(
     url,
@@ -95,8 +78,10 @@ async function saveSummaryToBackend(
     "save-summary"
   );
 
+  const txt = await res.text().catch(() => "");
+  console.log("⬅️ saveSummaryToBackend RESP", { ok: res.ok, status: res.status, body: txt?.slice?.(0, 240) });
+
   if (!res.ok) {
-    const txt = await res.text().catch(() => "");
     throw new Error(txt || `Error guardando summary (HTTP ${res.status})`);
   }
 
@@ -158,7 +143,7 @@ const CandidatePage: React.FC = () => {
   );
 
   // =====================================================
-  // ✅ 0) PROXY HeyGen (arregla CORS del SDK sin reescribirlo).
+  // ✅ PROXY HeyGen (arregla CORS del SDK sin reescribirlo).
   // =====================================================
   useEffect(() => {
     const originalFetch = window.fetch.bind(window);
@@ -268,7 +253,6 @@ const CandidatePage: React.FC = () => {
     };
   }, []);
 
-  // ✅ Start robusto
   async function grab() {
     try {
       if (!script) return setDebug("No se ha cargado el guion de la entrevista.");
@@ -284,11 +268,9 @@ const CandidatePage: React.FC = () => {
 
       if (!avatarId || !voiceId) return setDebug("Hay un problema con la configuración del avatar.");
 
-      // reset guardado summary
       hasSavedRef.current = false;
       setIsSummarizing(false);
 
-      // reset estado visible del resumen
       setSummaryStatus("idle");
       setSummaryErrorMsg("");
 
@@ -317,8 +299,7 @@ const CandidatePage: React.FC = () => {
       setStream(avatar.current!.mediaStream);
 
       const firstQuestion = script.questions[0];
-      const opening =
-        "Hola, gracias por tu tiempo. Vamos a comenzar la entrevista. " + (firstQuestion || "");
+      const opening = "Hola, gracias por tu tiempo. Vamos a comenzar la entrevista. " + (firstQuestion || "");
       setConversation(`Entrevistador: ${opening}`);
 
       try {
@@ -328,9 +309,7 @@ const CandidatePage: React.FC = () => {
         });
       } catch (e: any) {
         console.warn("⚠️ HeyGen speak inicial falló (no bloqueamos la sesión):", e);
-        setDebug(
-          "⚠️ El avatar se ha iniciado, pero el primer mensaje falló. Pulsa Start otra vez si no habla."
-        );
+        setDebug("⚠️ El avatar se ha iniciado, pero el primer mensaje falló. Pulsa Start otra vez si no habla.");
       }
     } catch (err: any) {
       console.error("Error al iniciar avatar:", err);
@@ -339,7 +318,6 @@ const CandidatePage: React.FC = () => {
     }
   }
 
-  // Cargar el video stream en el <video>
   useEffect(() => {
     if (stream && mediaStream.current) {
       const videoEl = mediaStream.current;
@@ -348,7 +326,6 @@ const CandidatePage: React.FC = () => {
 
       const handleLoadedData = () => {
         setIsConnecting(false);
-        // 🔊 intenta forzar audio
         videoEl.muted = false;
         videoEl.volume = 1;
       };
@@ -378,7 +355,7 @@ const CandidatePage: React.FC = () => {
   // ✅ OpenAI via BACKEND (con timeout)
   async function openaiChat(messages: any[], opts?: { model?: string; temperature?: number }) {
     const url = `${API_BASE}/api/openai/chat`;
-    const p = fetchWithTimeout(
+    const res = await fetchWithTimeout(
       url,
       {
         method: "POST",
@@ -393,7 +370,6 @@ const CandidatePage: React.FC = () => {
       "openai-chat"
     );
 
-    const res = await p;
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(json?.detail || json?.error || `OpenAI chat error (HTTP ${res.status})`);
@@ -401,7 +377,6 @@ const CandidatePage: React.FC = () => {
     return String(json?.text || "").trim();
   }
 
-  // ✅ Genera resumen individual al terminar
   async function buildInterviewSummary(fullConversation: string) {
     const prompt = `
 Actúa como un/a profesional senior en sociología y estudios cualitativos, con amplia experiencia en Voice of the Customer y análisis de experiencia de cliente en restauración.
@@ -439,10 +414,8 @@ ${fullConversation}
     if (!data?.sessionId) return setDebug("Primero pulsa Start para iniciar la sesión.");
     if (isFinished) return setDebug("La entrevista ya ha terminado.");
 
-    const currentQuestion =
-      questionIndex < script.questions.length ? script.questions[questionIndex] : null;
-    const nextQuestion =
-      questionIndex + 1 < script.questions.length ? script.questions[questionIndex + 1] : null;
+    const currentQuestion = questionIndex < script.questions.length ? script.questions[questionIndex] : null;
+    const nextQuestion = questionIndex + 1 < script.questions.length ? script.questions[questionIndex + 1] : null;
 
     const updatedConversation = conversation + `\nEntrevistado: ${cleanedAnswer}`;
 
@@ -488,18 +461,32 @@ Instrucciones para tu siguiente respuesta:
     });
   }
 
-  // ✅ Al terminar: generar + guardar resumen UNA vez (con estado visible en PROD)
+  // ✅ Al terminar: generar + guardar resumen UNA vez
   useEffect(() => {
     let cancelled = false;
 
     const run = async () => {
+      // 🔎 LOG SIEMPRE (clave para ver por qué NO guarda)
+      console.log("🔎 saveSummary check", {
+        apiBase: API_BASE,
+        isFinished,
+        interviewToken,
+        hasSaved: hasSavedRef.current,
+        isSummarizing,
+        convLen: conversation?.length || 0,
+      });
+
       try {
         if (!isFinished) return;
         if (!interviewToken) return;
         if (hasSavedRef.current) return;
         if (isSummarizing) return;
 
-        if (!conversation || conversation.trim().length < 30) return;
+        // ✅ FIX: NO bloquees por entrevistas cortas (antes era <30)
+        if (!conversation || conversation.trim().length < 5) {
+          console.warn("⚠️ No guardo porque conversación demasiado corta", { len: conversation?.length || 0 });
+          return;
+        }
 
         hasSavedRef.current = true;
         setIsSummarizing(true);
@@ -512,11 +499,9 @@ Instrucciones para tu siguiente respuesta:
         const summary = await buildInterviewSummary(conversation);
         if (cancelled) return;
 
-        // 1) Intento normal
         try {
           await saveSummaryToBackend(interviewToken, summary, conversation);
         } catch (e1: any) {
-          // 2) Reintento (a veces hay un “glitch” de red / cold start)
           console.warn("⚠️ save-summary falló, reintentando…", e1?.message || e1);
           await sleep(1200);
           await saveSummaryToBackend(interviewToken, summary, conversation);
@@ -688,23 +673,16 @@ Instrucciones para tu siguiente respuesta:
             </button>
           </div>
 
-          {/* ✅ estado del resumen visible SIEMPRE */}
-          {(summaryStatus === "saving" ||
-            summaryStatus === "saved" ||
-            summaryStatus === "error") && (
+          {(summaryStatus === "saving" || summaryStatus === "saved" || summaryStatus === "error") && (
             <div style={{ marginTop: 10, fontSize: 13, opacity: 0.92 }}>
               {summaryStatus === "saving" && "⏳ Guardando resumen de la entrevista…"}
               {summaryStatus === "saved" && "✅ Resumen guardado correctamente."}
-              {summaryStatus === "error" && (
-                <span>❌ No se pudo guardar el resumen. {summaryErrorMsg}</span>
-              )}
+              {summaryStatus === "error" && <span>❌ No se pudo guardar el resumen. {summaryErrorMsg}</span>}
             </div>
           )}
 
           {!!debug && !IS_PROD && (
-            <p style={{ marginTop: 10, fontSize: 13, opacity: 0.9, maxWidth: 720 }}>
-              {debug}
-            </p>
+            <p style={{ marginTop: 10, fontSize: 13, opacity: 0.9, maxWidth: 720 }}>{debug}</p>
           )}
 
           <div className="MediaPlayer" style={{ marginTop: 22 }}>
