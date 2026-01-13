@@ -157,7 +157,7 @@ const ResultsPage: React.FC = () => {
 
         if (cancelled) return;
         console.error("Error cargando resumen:", e);
-        setError(e?.message || "Se ha producido un error al recuperar el resumen");
+        setError(e?.message || "Se ha producido un error al recuperar el resumen.");
         setLoading(false);
       }
     };

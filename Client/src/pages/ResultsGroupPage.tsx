@@ -571,7 +571,7 @@ const ResultsGroupPage: React.FC = () => {
                 lineHeight: 1.6,
               }}
             >
-              {globalText?.trim() ? globalText : "Aún no hay informe global generado. Pulsa “Generar”."}
+              {globalText?.trim() ? globalText : "Aún no hay informe global generado. Pulsa “Generar” si quieres que se genere."}
             </div>
           </details>
         </section>
