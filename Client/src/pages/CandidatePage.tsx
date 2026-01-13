@@ -44,22 +44,63 @@ Reglas:
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// POST seguro al backend para guardar summary
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string) {
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), ms);
+
+  // Si el promise interno usa fetch, le pasamos signal aparte (lo hacemos abajo en fetchWithTimeout)
+  // Aquí sólo envolvemos por consistencia
+  return Promise.race([
+    promise.finally(() => clearTimeout(timeout)),
+    new Promise<T>((_resolve, reject) => {
+      ctrl.signal.addEventListener("abort", () => reject(new Error(`${label} timeout (${ms}ms)`)));
+    }),
+  ]);
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, ms: number, label: string) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), ms);
+
+  try {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    return res;
+  } catch (e: any) {
+    if (e?.name === "AbortError") throw new Error(`${label} timeout (${ms}ms)`);
+    throw e;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// POST seguro al backend para guardar summary (con timeout + mensaje claro)
 async function saveSummaryToBackend(
   interviewId: string,
   summary: string,
   rawConversation?: string
 ) {
-  const res = await fetch(`${API_BASE}/api/save-summary`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ interviewId, summary, rawConversation }),
-  });
+  const url = `${API_BASE}/api/save-summary`;
+
+  // 👇 importante para depurar en producción
+  console.log("➡️ saveSummaryToBackend POST", url, { interviewId, summaryLen: summary?.length });
+
+  const res = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ interviewId, summary, rawConversation }),
+    },
+    25000,
+    "save-summary"
+  );
 
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
     throw new Error(txt || `Error guardando summary (HTTP ${res.status})`);
   }
+
+  console.log("✅ saveSummaryToBackend OK");
 }
 
 function isValidConfig(cfg: any): cfg is StoredConfig {
@@ -96,11 +137,6 @@ const CandidatePage: React.FC = () => {
 
   const [script, setScript] = useState<InterviewScript | null>(null);
   const [conversation, setConversation] = useState("");
-  const conversationRef = useRef(""); // ✅ SIEMPRE la última conversación
-  useEffect(() => {
-    conversationRef.current = conversation;
-  }, [conversation]);
-
   const [questionIndex, setQuestionIndex] = useState(0);
   const [isFinished, setIsFinished] = useState(false);
 
@@ -184,7 +220,11 @@ const CandidatePage: React.FC = () => {
         const cfg = json.config as StoredConfig;
 
         if (cancelled) return;
-        setScript({ objective: cfg.objective, tone: cfg.tone, questions: cfg.questions });
+        setScript({
+          objective: cfg.objective,
+          tone: cfg.tone,
+          questions: cfg.questions,
+        });
         setAvatarId(cfg.avatarId);
         setVoiceId(cfg.voiceId);
 
@@ -248,7 +288,7 @@ const CandidatePage: React.FC = () => {
       hasSavedRef.current = false;
       setIsSummarizing(false);
 
-      // ✅ reset estado visible del resumen
+      // reset estado visible del resumen
       setSummaryStatus("idle");
       setSummaryErrorMsg("");
 
@@ -277,7 +317,8 @@ const CandidatePage: React.FC = () => {
       setStream(avatar.current!.mediaStream);
 
       const firstQuestion = script.questions[0];
-      const opening = "Hola, gracias por tu tiempo. Vamos a comenzar la entrevista. " + (firstQuestion || "");
+      const opening =
+        "Hola, gracias por tu tiempo. Vamos a comenzar la entrevista. " + (firstQuestion || "");
       setConversation(`Entrevistador: ${opening}`);
 
       try {
@@ -287,7 +328,9 @@ const CandidatePage: React.FC = () => {
         });
       } catch (e: any) {
         console.warn("⚠️ HeyGen speak inicial falló (no bloqueamos la sesión):", e);
-        setDebug("⚠️ El avatar se ha iniciado, pero el primer mensaje falló. Pulsa Start otra vez si no habla.");
+        setDebug(
+          "⚠️ El avatar se ha iniciado, pero el primer mensaje falló. Pulsa Start otra vez si no habla."
+        );
       }
     } catch (err: any) {
       console.error("Error al iniciar avatar:", err);
@@ -305,8 +348,7 @@ const CandidatePage: React.FC = () => {
 
       const handleLoadedData = () => {
         setIsConnecting(false);
-
-        // 🔊 intenta forzar audio (si el navegador lo permite)
+        // 🔊 intenta forzar audio
         videoEl.muted = false;
         videoEl.volume = 1;
       };
@@ -333,18 +375,25 @@ const CandidatePage: React.FC = () => {
     }
   }, [stream]);
 
-  // ✅ OpenAI via BACKEND
+  // ✅ OpenAI via BACKEND (con timeout)
   async function openaiChat(messages: any[], opts?: { model?: string; temperature?: number }) {
-    const res = await fetch(`${API_BASE}/api/openai/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages,
-        model: opts?.model || "gpt-4.1-mini",
-        temperature: typeof opts?.temperature === "number" ? opts.temperature : 0.4,
-      }),
-    });
+    const url = `${API_BASE}/api/openai/chat`;
+    const p = fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages,
+          model: opts?.model || "gpt-4.1-mini",
+          temperature: typeof opts?.temperature === "number" ? opts.temperature : 0.4,
+        }),
+      },
+      25000,
+      "openai-chat"
+    );
 
+    const res = await p;
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(json?.detail || json?.error || `OpenAI chat error (HTTP ${res.status})`);
@@ -439,54 +488,72 @@ Instrucciones para tu siguiente respuesta:
     });
   }
 
-  // ✅ FIX: Al terminar -> generar + guardar UNA vez (SIN auto-cancelarse)
+  // ✅ Al terminar: generar + guardar resumen UNA vez (con estado visible en PROD)
   useEffect(() => {
-    if (!isFinished) return;
-    if (!interviewToken) return;
-    if (hasSavedRef.current) return;
+    let cancelled = false;
 
-    const conv = (conversationRef.current || "").trim();
-    if (conv.length < 30) return;
-
-    hasSavedRef.current = true;
-    setIsSummarizing(true);
-    setSummaryStatus("saving");
-    setSummaryErrorMsg("");
-
-    (async () => {
+    const run = async () => {
       try {
+        if (!isFinished) return;
+        if (!interviewToken) return;
+        if (hasSavedRef.current) return;
+        if (isSummarizing) return;
+
+        if (!conversation || conversation.trim().length < 30) return;
+
+        hasSavedRef.current = true;
+        setIsSummarizing(true);
+        setSummaryStatus("saving");
+        setSummaryErrorMsg("");
+
         if (!IS_PROD) setDebug("Generando y guardando el resumen…");
+        console.log("🧾 FIN entrevista -> generar resumen", { interviewToken, convLen: conversation.length });
 
-        const summary = await buildInterviewSummary(conv);
+        const summary = await buildInterviewSummary(conversation);
+        if (cancelled) return;
 
-        // ✅ ESTA ES LA LLAMADA QUE ANTES NUNCA LLEGABA A EJECUTARSE
-        await saveSummaryToBackend(interviewToken, summary, conv);
+        // 1) Intento normal
+        try {
+          await saveSummaryToBackend(interviewToken, summary, conversation);
+        } catch (e1: any) {
+          // 2) Reintento (a veces hay un “glitch” de red / cold start)
+          console.warn("⚠️ save-summary falló, reintentando…", e1?.message || e1);
+          await sleep(1200);
+          await saveSummaryToBackend(interviewToken, summary, conversation);
+        }
+
+        if (cancelled) return;
 
         setSummaryStatus("saved");
         if (!IS_PROD) setDebug("✅ Resumen guardado correctamente.");
       } catch (e: any) {
         console.error("❌ Error generando/guardando el resumen:", e);
-        hasSavedRef.current = false; // permite reintentar
+        hasSavedRef.current = false;
+
         setSummaryStatus("error");
         setSummaryErrorMsg(e?.message || "Error guardando el resumen.");
+
         setDebug(e?.message || "❌ Error generando/guardando el resumen.");
       } finally {
-        setIsSummarizing(false);
+        if (!cancelled) setIsSummarizing(false);
       }
-    })();
-  }, [isFinished, interviewToken]);
+    };
 
-  // ✅ Whisper via BACKEND
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [isFinished, interviewToken, conversation, isSummarizing]);
+
+  // ✅ Whisper via BACKEND (con timeout)
   async function transcribeOnBackend(audioBlob: Blob) {
     const formData = new FormData();
     formData.append("file", audioBlob, "audio.webm");
     formData.append("model", "whisper-1");
     formData.append("language", "es");
 
-    const res = await fetch(`${API_BASE}/api/openai/transcribe`, {
-      method: "POST",
-      body: formData,
-    });
+    const url = `${API_BASE}/api/openai/transcribe`;
+    const res = await fetchWithTimeout(url, { method: "POST", body: formData }, 25000, "transcribe");
 
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -612,8 +679,8 @@ Instrucciones para tu siguiente respuesta:
                   ? isSummarizing
                     ? "Guardando resumen…"
                     : isConnecting
-                    ? "Conectando…"
-                    : "Primero pulsa Start"
+                      ? "Conectando…"
+                      : "Primero pulsa Start"
                   : undefined
               }
             >
@@ -622,7 +689,9 @@ Instrucciones para tu siguiente respuesta:
           </div>
 
           {/* ✅ estado del resumen visible SIEMPRE */}
-          {(summaryStatus === "saving" || summaryStatus === "saved" || summaryStatus === "error") && (
+          {(summaryStatus === "saving" ||
+            summaryStatus === "saved" ||
+            summaryStatus === "error") && (
             <div style={{ marginTop: 10, fontSize: 13, opacity: 0.92 }}>
               {summaryStatus === "saving" && "⏳ Guardando resumen de la entrevista…"}
               {summaryStatus === "saved" && "✅ Resumen guardado correctamente."}
