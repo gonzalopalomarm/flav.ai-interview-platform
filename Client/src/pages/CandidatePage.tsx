@@ -138,6 +138,10 @@ const CandidatePage: React.FC = () => {
   const [data, setData] = useState<NewSessionData>();
   const mediaStream = useRef<HTMLVideoElement>(null);
 
+  // ✅ que el avatar inicie hablando al cargar el stream (solo 1 vez)
+const openingRef = useRef<string>("");
+const hasSpokenOpeningRef = useRef(false);
+
   const [script, setScript] = useState<InterviewScript | null>(null);
   const [conversation, setConversation] = useState("");
   const [questionIndex, setQuestionIndex] = useState(0);
@@ -317,18 +321,20 @@ const CandidatePage: React.FC = () => {
       setStream(avatar.current!.mediaStream);
 
       const firstQuestion = script.questions[0];
-      const opening = "Hola, gracias por tu tiempo. Vamos a comenzar la entrevista. " + (firstQuestion || "");
-      setConversation(`Entrevistador: ${opening}`);
 
-      try {
-        await sleep(600);
-        await avatar.current!.speak({
-          taskRequest: { text: opening, sessionId: res.sessionId },
-        });
-      } catch (e: any) {
-        console.warn("⚠️ HeyGen speak inicial falló (no bloqueamos la sesión):", e);
-        setDebug("⚠️ El avatar se ha iniciado, pero el primer mensaje falló. Pulsa Start otra vez si no habla.");
-      }
+// ✅ (mejora) añade un espacio antes de la primera pregunta
+const opening =
+  "Hola, gracias por estar aquí. Soy tu entrevistador virtual. Esta entrevista es para entender tu experiencia real en un restaurante. " +
+  (firstQuestion || "");
+
+// ✅ guardamos el opening para decirlo cuando el stream esté listo
+openingRef.current = opening;
+hasSpokenOpeningRef.current = false;
+
+setConversation(`Entrevistador: ${opening}`);
+
+// ⛔ NO hacemos speak aquí. Se hará en onloadeddata cuando el avatar ya esté visible.
+
     } catch (err: any) {
       console.error("Error al iniciar avatar:", err);
       setDebug("Ha ocurrido un problema al iniciar el avatar.");
@@ -342,11 +348,30 @@ const CandidatePage: React.FC = () => {
 
       videoEl.srcObject = stream;
 
-      const handleLoadedData = () => {
-        setIsConnecting(false);
-        videoEl.muted = false;
-        videoEl.volume = 1;
-      };
+      const handleLoadedData = async () => {
+  setIsConnecting(false);
+  videoEl.muted = false;
+  videoEl.volume = 1;
+
+  // ✅ cuando el avatar ya está cargado/visible, inicia hablando
+  try {
+    if (!hasSpokenOpeningRef.current && openingRef.current && data?.sessionId) {
+      hasSpokenOpeningRef.current = true;
+
+      // pequeño buffer para estabilidad del stream
+      await sleep(400);
+
+      await avatar.current?.speak({
+        taskRequest: { text: openingRef.current, sessionId: data.sessionId },
+      });
+    }
+  } catch (e) {
+    console.warn("⚠️ Opening speak falló:", e);
+    // si quieres reintentar en caso de fallo, comenta la siguiente línea:
+    // hasSpokenOpeningRef.current = false;
+  }
+};
+
 
       const handleError = () => {
         setIsConnecting(false);
@@ -368,7 +393,7 @@ const CandidatePage: React.FC = () => {
         videoEl.onloadedmetadata = null;
       };
     }
-  }, [stream]);
+  }, [stream, data]);
 
   // ✅ OpenAI via BACKEND (con timeout)
   async function openaiChat(messages: any[], opts?: { model?: string; temperature?: number }) {
@@ -719,8 +744,8 @@ Instrucciones para tu siguiente respuesta:
 
           <p className="CandidateIntro">
             Pulsa <strong>Start</strong> para iniciar. Para responder, pulsa{" "}
-            <strong>Responder por voz</strong>, habla y después pulsa{" "}
-            <strong>Detener grabación</strong>.
+            <strong>Responder al avatar</strong>, habla y después pulsa{" "}
+            <strong>Terminar respuesta</strong>.
           </p>
 
           <div className="CandidateButtonsRow">
@@ -746,7 +771,7 @@ Instrucciones para tu siguiente respuesta:
                   : undefined
               }
             >
-              {isRecording ? "🔴 Detener grabación" : "🎤 Responder por voz"}
+              {isRecording ? "🔴 Terminar respuesta" : "🎤 Responder al avatar"}
             </button>
           </div>
 
