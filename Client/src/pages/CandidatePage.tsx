@@ -489,7 +489,7 @@ Conversación hasta ahora (Entrevistador = IA, Entrevistado = humano):
 ${updatedConversation}
 
 Instrucciones para tu siguiente respuesta:
-- Resume o valida brevemente lo que acaba de decir el entrevistado.
+- Resume o valida brevemente lo que acaba de decir el entrevistado, pero que no parezca que repites todo el rato lo que dice, simplemente que le demuestre que le has entendido
 - Si aún no has hecho la pregunta actual del guion, hazla ahora.
 - Si ya se ha respondido bien, enlaza de forma natural con la SIGUIENTE pregunta del guion (si existe).
 - Si NO quedan más preguntas en el guion, agradece y cierra la entrevista en 2–3 frases sin abrir nuevos temas.
