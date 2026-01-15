@@ -106,20 +106,32 @@ async function saveSummaryToBackend(interviewId: string, summary: string, rawCon
   console.log("✅ saveSummaryToBackend OK");
 }
 
-function isValidConfig(cfg: any): cfg is StoredConfig {
-  return !!(
-    cfg &&
-    typeof cfg.objective === "string" &&
-    typeof cfg.tone === "string" &&
-    Array.isArray(cfg.questions) &&
-    cfg.questions.length > 0 &&
-    cfg.questions.every((q: any) => typeof q === "string" && q.trim().length > 0) &&
-    typeof cfg.avatarId === "string" &&
-    cfg.avatarId.trim().length > 0 &&
-    typeof cfg.voiceId === "string" &&
-    cfg.voiceId.trim().length > 0
-  );
+// ✅ Normaliza preguntas del guion (evita cierres prematuros)
+function normalizeQuestions(input: string[]): string[] {
+  const out: string[] = [];
+
+  for (const item of input || []) {
+    const parts = String(item)
+      .split(/\r?\n/g)        // separa por líneas si vienen varias preguntas juntas
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    for (let line of parts) {
+      // elimina bullets comunes
+      line = line.replace(/^[-•]\s*/, "").trim();
+
+      // descarta basura tipo "-" o "—"
+      if (!line) continue;
+      if (line === "-" || line === "—") continue;
+
+      out.push(line);
+    }
+  }
+
+  // elimina duplicados por seguridad
+  return Array.from(new Set(out));
 }
+
 
 const CandidatePage: React.FC = () => {
   const { token: interviewToken } = useParams<{ token: string }>();
@@ -224,14 +236,25 @@ const hasSpokenOpeningRef = useRef(false);
           return;
         }
 
-        const cfg = json.config as StoredConfig;
+ const cfg = json.config as StoredConfig;
 
-        if (cancelled) return;
-        setScript({
-          objective: cfg.objective,
-          tone: cfg.tone,
-          questions: cfg.questions,
-        });
+// ✅ NORMALIZA preguntas (evita que la 2ª “desaparezca” por formato)
+const normalized = normalizeQuestions(cfg.questions);
+
+if (!normalized.length) {
+  if (cancelled) return;
+  setConfigError("El guion no contiene preguntas válidas.");
+  setIsLoadingConfig(false);
+  return;
+}
+
+if (cancelled) return;
+setScript({
+  objective: cfg.objective,
+  tone: cfg.tone,
+  questions: normalized,
+});
+
         setAvatarId(cfg.avatarId);
         setVoiceId(cfg.voiceId);
 
