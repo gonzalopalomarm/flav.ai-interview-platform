@@ -105,6 +105,20 @@ async function saveSummaryToBackend(interviewId: string, summary: string, rawCon
 
   console.log("✅ saveSummaryToBackend OK");
 }
+function isValidConfig(cfg: any): cfg is StoredConfig {
+  return !!(
+    cfg &&
+    typeof cfg.objective === "string" &&
+    typeof cfg.tone === "string" &&
+    Array.isArray(cfg.questions) &&
+    cfg.questions.length > 0 &&
+    cfg.questions.every((q: any) => typeof q === "string" && q.trim().length > 0) &&
+    typeof cfg.avatarId === "string" &&
+    cfg.avatarId.trim().length > 0 &&
+    typeof cfg.voiceId === "string" &&
+    cfg.voiceId.trim().length > 0
+  );
+}
 
 // ✅ Normaliza preguntas del guion (evita cierres prematuros)
 function normalizeQuestions(input: string[]): string[] {
