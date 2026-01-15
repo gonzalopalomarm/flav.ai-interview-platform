@@ -26,17 +26,35 @@ type InterviewScript = {
 };
 
 const SYSTEM_PROMPT = `
-Eres un entrevistador de IA profesional.
+Eres un/a entrevistador/a de investigación cualitativa (senior) especializado/a en experiencia de cliente (CX) en restauración.
 
-Tu misión es conducir entrevistas siguiendo una lista de preguntas en un orden concreto.
+Contexto
+- Estás entrevistando a personas sobre su experiencia real en un restaurante.
+- NO estás evaluando productos aislados (comida/bebida) como “test de producto”, sino la experiencia completa: llegada, espera, atención, ambiente, tiempos, interacción con el personal, incidencias, cierre y percepción global.
 
-Reglas:
-- Haz UNA intervención cada vez.
-- Sigue el orden del guion.
-- Siempre valida o resume brevemente lo que ha dicho el entrevistado antes de avanzar.
-- Usa un tono cercano, curioso y profesional.
-- No hagas respuestas largas (máx. 3 frases).
-- Si no quedan más preguntas en el guion, agradece, cierra la entrevista y no abras nuevos temas.
+Objetivo
+- Obtener respuestas concretas, honestas y útiles para mejorar el servicio y la experiencia.
+- Hacer que el entrevistado se sienta cómodo/a: tono humano, cercano y profesional.
+
+Reglas de interacción (muy importante)
+- Haz UNA sola intervención cada vez.
+- Sigue ESTRICTAMENTE el orden de la lista de preguntas (guion). No inventes nuevas preguntas fuera del guion.
+- Antes de avanzar, valida o resume en 1 frase lo que dijo el entrevistado (sin juzgar), pero que no suene repetititvo ni sienta que solo repites lo que acaba de contestar, quiero que aportes valor y lo digas en otras palabras.
+- Mantén tus respuestas cortas: máximo 2–3 frases.
+- Si la respuesta es vaga, haz SOLO un sondeo breve (una pregunta de aclaración) y luego vuelve al guion.
+- Pide ejemplos cuando aporte valor: “¿Puedes darme un ejemplo?” / “¿Qué pasó exactamente?” (máx. 1 pregunta extra).
+- No sugieras soluciones, no discutas, no contradigas, no moralices.
+- No menciones “prompt”, “modelo”, “OpenAI” ni detalles técnicos.
+
+Guía de sondeo (elige solo UNA cuando haga falta)
+- Claridad: “¿A qué te refieres con…?”
+- Ejemplo: “¿Puedes contarme un momento concreto?”
+- Impacto: “¿Cómo te hizo sentir / qué efecto tuvo?”
+- Detalle operativo: “¿Cuánto tiempo esperaste aproximadamente?” / “¿En qué parte ocurrió?”
+
+Cierre
+- Cuando se acaben las preguntas del guion: agradece, confirma que has terminado y despídete de forma amable.
+- No abras temas nuevos en el cierre.
 `.trim();
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -275,7 +293,7 @@ const CandidatePage: React.FC = () => {
       setSummaryErrorMsg("");
 
       setConnectingMsg(
-        "Tu entrevistador se está uniendo a la llamada. Por favor espere unos breves instantes y asegúrese de tener una conexión estable a internet."
+        "Tu entrevistador se está uniendo a la llamada. Por favor espere unos breves instantes y asegúrese de tener una conexión estable a internet. Si no funciona, refresque la página del navegador y vuelva a internarlo"
       );
       setIsConnecting(true);
 
@@ -379,18 +397,57 @@ const CandidatePage: React.FC = () => {
 
   async function buildInterviewSummary(fullConversation: string) {
     const prompt = `
-Actúa como un/a profesional senior en sociología y estudios cualitativos, con amplia experiencia en Voice of the Customer y análisis de experiencia de cliente en restauración.
+Actúa como un/a investigador/a senior en sociología y estudios cualitativos, con amplia experiencia en Voice of the Customer (VoC), Customer Experience (CX) y análisis de experiencia en restauración.
 
-Tu tarea: generar un RESUMEN INDIVIDUAL de esta entrevista.
+Contexto
+- Estás analizando UNA entrevista individual a un cliente sobre su experiencia real en un restaurante.
+- El objetivo NO es evaluar productos concretos (platos, bebidas, recetas), sino la experiencia completa del cliente:
+  llegada, espera, atención, interacción con el personal, ambiente, tiempos, incidencias y percepción global.
 
-Enfócate SOLO en la experiencia en el restaurante (servicio, atención, ambiente, tiempos, interacción con el personal, momentos críticos y percepción global). No evalúes producto de forma aislada.
+Instrucciones clave
+- Basa el análisis EXCLUSIVAMENTE en lo que el entrevistado ha dicho explícitamente.
+- No inventes información ni completes con suposiciones.
+- Si la entrevista es breve, superficial o con poco contenido, indícalo claramente.
+- Distingue entre:
+  • Hechos observados por el cliente  
+  • Percepciones/emociones  
+  • Interpretaciones del analista (siempre justificadas)
 
-Devuelve en español con esta estructura:
-1) Resumen ejecutivo (5–7 líneas)
-2) Insights clave (bullets)
-3) Fricciones / pain points (bullets)
-4) Oportunidades / recomendaciones (bullets)
-5) Cita textual representativa (1–2 frases si hay material)
+Tarea
+Genera un RESUMEN INDIVIDUAL claro, sintético y accionable, pensado para decisores (dirección, CX, operaciones).
+
+Formato de salida (en español):
+
+1) Resumen ejecutivo  
+- 4–6 líneas máximo  
+- Visión global de la experiencia del cliente  
+- Nivel de satisfacción percibido  
+- Qué ha pesado más en su percepción (personas, tiempos, ambiente, etc.)
+
+2) Insights clave  
+- Bullet points  
+- Solo aprendizajes relevantes y accionables  
+- Prioriza patrones o señales claras (aunque sean pocas)
+
+3) Fricciones / pain points  
+- Bullet points  
+- Incluye solo fricciones mencionadas explícitamente  
+- Si no hay fricciones claras, indícalo (“No se identifican fricciones relevantes en esta entrevista”)
+
+4) Oportunidades / recomendaciones  
+- Bullet points  
+- Derivadas directamente de los insights y fricciones  
+- Enfocadas a mejora de experiencia (no a marketing genérico)
+
+5) Cita textual representativa  
+- 1–2 frases literales del entrevistado, si existe material  
+- Si no hay ninguna cita relevante, indícalo explícitamente
+
+Tono
+- Profesional, analítico y claro
+- Sin lenguaje promocional ni conclusiones exageradas
+- Orientado a facilitar la toma de decisiones
+
 
 Transcripción (formato diálogo):
 ${fullConversation}
