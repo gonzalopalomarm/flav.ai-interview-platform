@@ -608,7 +608,7 @@ FORMATO:
 - ⬜️ Acción + impacto
 
 🎨 4) Persona global
-- Nombre ficticio, objetivos, frustraciones
+- Ojetivos, frustraciones
 
 ⚠️ 5) Riesgos (si aplica)
 `.trim();
