@@ -391,3 +391,31 @@ h3 {
   display: flex;
   justify-content: flex-start;
 }
+
+.AvatarFrame {
+  position: relative;
+}
+
+.AvatarVoiceButton {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+
+  background: #e53935;
+  color: white;
+  border: none;
+  border-radius: 999px;
+  padding: 14px 22px;
+  font-size: 15px;
+  font-weight: 600;
+
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+
+.AvatarVoiceButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
