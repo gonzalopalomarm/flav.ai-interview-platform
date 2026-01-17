@@ -126,7 +126,7 @@ function normalizeQuestions(input: string[]): string[] {
 
   for (const item of input || []) {
     const parts = String(item)
-      .split(/\r?\n/g)        // separa por líneas si vienen varias preguntas juntas
+      .split(/\r?\n/g) // separa por líneas si vienen varias preguntas juntas
       .map((s) => s.trim())
       .filter(Boolean);
 
@@ -146,7 +146,6 @@ function normalizeQuestions(input: string[]): string[] {
   return Array.from(new Set(out));
 }
 
-
 const CandidatePage: React.FC = () => {
   const { token: interviewToken } = useParams<{ token: string }>();
 
@@ -165,8 +164,8 @@ const CandidatePage: React.FC = () => {
   const mediaStream = useRef<HTMLVideoElement>(null);
 
   // ✅ que el avatar inicie hablando al cargar el stream (solo 1 vez)
-const openingRef = useRef<string>("");
-const hasSpokenOpeningRef = useRef(false);
+  const openingRef = useRef<string>("");
+  const hasSpokenOpeningRef = useRef(false);
 
   const [script, setScript] = useState<InterviewScript | null>(null);
   const [conversation, setConversation] = useState("");
@@ -250,24 +249,24 @@ const hasSpokenOpeningRef = useRef(false);
           return;
         }
 
- const cfg = json.config as StoredConfig;
+        const cfg = json.config as StoredConfig;
 
-// ✅ NORMALIZA preguntas (evita que la 2ª “desaparezca” por formato)
-const normalized = normalizeQuestions(cfg.questions);
+        // ✅ NORMALIZA preguntas (evita que la 2ª “desaparezca” por formato)
+        const normalized = normalizeQuestions(cfg.questions);
 
-if (!normalized.length) {
-  if (cancelled) return;
-  setConfigError("El guion no contiene preguntas válidas.");
-  setIsLoadingConfig(false);
-  return;
-}
+        if (!normalized.length) {
+          if (cancelled) return;
+          setConfigError("El guion no contiene preguntas válidas.");
+          setIsLoadingConfig(false);
+          return;
+        }
 
-if (cancelled) return;
-setScript({
-  objective: cfg.objective,
-  tone: cfg.tone,
-  questions: normalized,
-});
+        if (cancelled) return;
+        setScript({
+          objective: cfg.objective,
+          tone: cfg.tone,
+          questions: normalized,
+        });
 
         setAvatarId(cfg.avatarId);
         setVoiceId(cfg.voiceId);
@@ -359,19 +358,18 @@ setScript({
 
       const firstQuestion = script.questions[0];
 
-// ✅ (mejora) añade un espacio antes de la primera pregunta
-const opening =
-  "Hola, gracias por estar aquí. Soy tu entrevistador virtual. Esta entrevista es para entender tu experiencia real en un restaurante. " +
-  (firstQuestion || "");
+      // ✅ (mejora) añade un espacio antes de la primera pregunta
+      const opening =
+        "Hola, gracias por estar aquí. Soy tu entrevistador virtual. Esta entrevista es para entender tu experiencia real en un restaurante. " +
+        (firstQuestion || "");
 
-// ✅ guardamos el opening para decirlo cuando el stream esté listo
-openingRef.current = opening;
-hasSpokenOpeningRef.current = false;
+      // ✅ guardamos el opening para decirlo cuando el stream esté listo
+      openingRef.current = opening;
+      hasSpokenOpeningRef.current = false;
 
-setConversation(`Entrevistador: ${opening}`);
+      setConversation(`Entrevistador: ${opening}`);
 
-// ⛔ NO hacemos speak aquí. Se hará en onloadeddata cuando el avatar ya esté visible.
-
+      // ⛔ NO hacemos speak aquí. Se hará en onloadeddata cuando el avatar ya esté visible.
     } catch (err: any) {
       console.error("Error al iniciar avatar:", err);
       setDebug("Ha ocurrido un problema al iniciar el avatar.");
@@ -386,29 +384,28 @@ setConversation(`Entrevistador: ${opening}`);
       videoEl.srcObject = stream;
 
       const handleLoadedData = async () => {
-  setIsConnecting(false);
-  videoEl.muted = false;
-  videoEl.volume = 1;
+        setIsConnecting(false);
+        videoEl.muted = false;
+        videoEl.volume = 1;
 
-  // ✅ cuando el avatar ya está cargado/visible, inicia hablando
-  try {
-    if (!hasSpokenOpeningRef.current && openingRef.current && data?.sessionId) {
-      hasSpokenOpeningRef.current = true;
+        // ✅ cuando el avatar ya está cargado/visible, inicia hablando
+        try {
+          if (!hasSpokenOpeningRef.current && openingRef.current && data?.sessionId) {
+            hasSpokenOpeningRef.current = true;
 
-      // pequeño buffer para estabilidad del stream
-      await sleep(400);
+            // pequeño buffer para estabilidad del stream
+            await sleep(400);
 
-      await avatar.current?.speak({
-        taskRequest: { text: openingRef.current, sessionId: data.sessionId },
-      });
-    }
-  } catch (e) {
-    console.warn("⚠️ Opening speak falló:", e);
-    // si quieres reintentar en caso de fallo, comenta la siguiente línea:
-    // hasSpokenOpeningRef.current = false;
-  }
-};
-
+            await avatar.current?.speak({
+              taskRequest: { text: openingRef.current, sessionId: data.sessionId },
+            });
+          }
+        } catch (e) {
+          console.warn("⚠️ Opening speak falló:", e);
+          // si quieres reintentar en caso de fallo, comenta la siguiente línea:
+          // hasSpokenOpeningRef.current = false;
+        }
+      };
 
       const handleError = () => {
         setIsConnecting(false);
@@ -579,7 +576,7 @@ Instrucciones para tu siguiente respuesta:
     });
   }
 
-    // ✅ Al terminar: generar + guardar resumen UNA vez (ROBUSTO)
+  // ✅ Al terminar: generar + guardar resumen UNA vez (ROBUSTO)
   const isSavingRef = useRef(false);
 
   useEffect(() => {
@@ -761,6 +758,7 @@ Instrucciones para tu siguiente respuesta:
   }
 
   const voiceDisabled = isFinished || !data?.sessionId || isConnecting || isSummarizing;
+  const hasSession = !!data?.sessionId; // ✅ avatar iniciado / sesión lista
 
   return (
     <div className="HeyGenStreamingAvatar">
@@ -785,30 +783,34 @@ Instrucciones para tu siguiente respuesta:
           </p>
 
           <div className="CandidateButtonsRow">
-            <button
-              className="PrimaryFlavButton"
-              onClick={grab}
-              disabled={isFinished || isConnecting || isSummarizing}
-            >
-              {isConnecting ? "Conectando…" : isSummarizing ? "Guardando…" : "Start"}
-            </button>
+            {!hasSession && (
+              <button
+                className="PrimaryFlavButton"
+                onClick={grab}
+                disabled={isFinished || isConnecting || isSummarizing}
+              >
+                {isConnecting ? "Conectando…" : isSummarizing ? "Guardando…" : "Start"}
+              </button>
+            )}
 
-            <button
-              className="PrimaryFlavButton"
-              onClick={isRecording ? stopRecording : startRecording}
-              disabled={voiceDisabled}
-              title={
-                voiceDisabled
-                  ? isSummarizing
-                    ? "Guardando resumen…"
-                    : isConnecting
-                      ? "Conectando…"
-                      : "Primero pulsa Start"
-                  : undefined
-              }
-            >
-              {isRecording ? "🔴 Terminar respuesta" : "🎤 Responder al avatar"}
-            </button>
+            {hasSession && (
+              <button
+                className="PrimaryFlavButton"
+                onClick={isRecording ? stopRecording : startRecording}
+                disabled={voiceDisabled}
+                title={
+                  voiceDisabled
+                    ? isSummarizing
+                      ? "Guardando resumen…"
+                      : isConnecting
+                        ? "Conectando…"
+                        : "La entrevista ha finalizado"
+                    : undefined
+                }
+              >
+                {isRecording ? "🔴 Terminar respuesta" : "🎤 Responder al avatar"}
+              </button>
+            )}
           </div>
 
           {(summaryStatus === "saving" || summaryStatus === "saved" || summaryStatus === "error") && (
