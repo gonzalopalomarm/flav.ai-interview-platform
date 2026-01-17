@@ -105,6 +105,7 @@ async function saveSummaryToBackend(interviewId: string, summary: string, rawCon
 
   console.log("✅ saveSummaryToBackend OK");
 }
+
 function isValidConfig(cfg: any): cfg is StoredConfig {
   return !!(
     cfg &&
@@ -748,9 +749,7 @@ Instrucciones para tu siguiente respuesta:
           <h1>❌ Problema con el enlace</h1>
           <p style={{ maxWidth: 600 }}>{configError}</p>
           {!!debug && !IS_PROD && (
-            <p style={{ marginTop: 12, fontSize: 11, opacity: 0.5 }}>
-              (Detalle técnico: {debug})
-            </p>
+            <p style={{ marginTop: 12, fontSize: 11, opacity: 0.5 }}>(Detalle técnico: {debug})</p>
           )}
         </header>
       </div>
@@ -777,38 +776,14 @@ Instrucciones para tu siguiente respuesta:
           <h1 style={{ marginTop: 14 }}>Entrevista experiencia</h1>
 
           <p className="CandidateIntro">
-            Pulsa <strong>Start</strong> para iniciar. Para responder, pulsa{" "}
-            <strong>Responder al avatar</strong>, habla y después pulsa{" "}
-            <strong>Terminar respuesta</strong>.
+            Pulsa <strong>Start</strong> para iniciar. Para responder, pulsa <strong>Responder al avatar</strong>, habla
+            y después pulsa <strong>Terminar respuesta</strong>.
           </p>
 
           <div className="CandidateButtonsRow">
             {!hasSession && (
-              <button
-                className="PrimaryFlavButton"
-                onClick={grab}
-                disabled={isFinished || isConnecting || isSummarizing}
-              >
+              <button className="PrimaryFlavButton" onClick={grab} disabled={isFinished || isConnecting || isSummarizing}>
                 {isConnecting ? "Conectando…" : isSummarizing ? "Guardando…" : "Start"}
-              </button>
-            )}
-
-            {hasSession && (
-              <button
-                className="PrimaryFlavButton"
-                onClick={isRecording ? stopRecording : startRecording}
-                disabled={voiceDisabled}
-                title={
-                  voiceDisabled
-                    ? isSummarizing
-                      ? "Guardando resumen…"
-                      : isConnecting
-                        ? "Conectando…"
-                        : "La entrevista ha finalizado"
-                    : undefined
-                }
-              >
-                {isRecording ? "🔴 Terminar respuesta" : "🎤 Responder al avatar"}
               </button>
             )}
           </div>
@@ -828,6 +803,26 @@ Instrucciones para tu siguiente respuesta:
           <div className="MediaPlayer" style={{ marginTop: 22 }}>
             <div className="AvatarFrame">
               <video ref={mediaStream} className="AvatarVideo" playsInline autoPlay />
+
+              {/* ✅ BOTÓN dentro del avatar, abajo */}
+              {hasSession && !isFinished && (
+                <button
+                  className="AvatarVoiceButton"
+                  onClick={isRecording ? stopRecording : startRecording}
+                  disabled={voiceDisabled}
+                  title={
+                    voiceDisabled
+                      ? isSummarizing
+                        ? "Guardando resumen…"
+                        : isConnecting
+                          ? "Conectando…"
+                          : "La entrevista ha finalizado"
+                      : undefined
+                  }
+                >
+                  {isRecording ? "🔴 Terminar respuesta" : "🎤 Responder al avatar"}
+                </button>
+              )}
 
               {isFinished && (
                 <div className="AvatarOverlay" role="status" aria-live="polite">
