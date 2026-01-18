@@ -470,6 +470,18 @@ app.get("/api/interview-config/:token", async (req, res) => {
   try {
     const token = String(req.params.token);
 
+    // =========================================================
+    // ✅ NUEVO: si ya existe summary para este token => link expirado
+    // (esto bloquea el Candidate sin tocar el front)
+    // =========================================================
+    const used = await get(`SELECT interviewId FROM summaries WHERE interviewId = ?`, [token]);
+    if (used) {
+      return res.status(410).json({
+        error: "Este enlace ya ha sido utilizado y ha expirado. Pide uno nuevo al equipo.",
+        expired: true,
+      });
+    }
+
     const row = await get(
       `SELECT interviewId, configJson, metaJson, createdAt, updatedAt FROM interview_configs WHERE interviewId = ?`,
       [token]
@@ -624,18 +636,28 @@ app.post("/api/save-summary", async (req, res) => {
       return res.status(400).json({ error: "Faltan interviewId o summary" });
     }
 
+    const id = String(interviewId);
+
+    // =========================================================
+    // ✅ NUEVO: no permitir re-uso / sobrescritura
+    // Si ya existe summary => link ya fue usado => 409
+    // =========================================================
+    const existing = await get(`SELECT interviewId FROM summaries WHERE interviewId = ?`, [id]);
+    if (existing) {
+      return res.status(409).json({
+        error: "Este enlace ya fue utilizado (summary ya existe). No se permite guardar de nuevo.",
+        expired: true,
+      });
+    }
+
     const now = new Date().toISOString();
 
     await run(
       `
       INSERT INTO summaries (interviewId, summary, rawConversation, createdAt)
       VALUES (?, ?, ?, ?)
-      ON CONFLICT(interviewId) DO UPDATE SET
-        summary=excluded.summary,
-        rawConversation=excluded.rawConversation,
-        createdAt=excluded.createdAt
       `,
-      [String(interviewId), String(summary), rawConversation ? String(rawConversation) : null, now]
+      [id, String(summary), rawConversation ? String(rawConversation) : null, now]
     );
 
     res.json({ ok: true });
