@@ -428,6 +428,7 @@ const AdminPage: React.FC = () => {
                 style={{ width: "100%", marginTop: 4 }}
                 value={tone}
                 onChange={(e) => setTone(e.target.value)}
+                placeholder="Escoja el tono del entrevistador"
                 disabled={!isAuthed}
               />
             </div>
