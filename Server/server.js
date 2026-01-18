@@ -745,18 +745,72 @@ app.post("/api/save-group", requireAdmin, async (req, res) => {
   }
 });
 
+// =========================================================
+// ✅ NUEVO: obtener un grupo por id (ADMIN ONLY) + status completado
+// Esto hace que tu ResultsGroupPage deje de depender de localStorage.
+// =========================================================
+app.get("/api/group/:groupId", requireAdmin, async (req, res) => {
+  try {
+    const gid = String(req.params.groupId);
+
+    const g = await get(`SELECT * FROM groups WHERE groupId = ?`, [gid]);
+    if (!g) return res.status(404).json({ error: "Grupo no encontrado" });
+
+    const interviewIds = JSON.parse(g.interviewIds || "[]").map(String);
+
+    // ✅ traer completados para ese grupo
+    let completedInterviewIds = [];
+    if (interviewIds.length > 0) {
+      const placeholders = interviewIds.map(() => "?").join(",");
+      const rows = await all(
+        `SELECT interviewId FROM summaries WHERE interviewId IN (${placeholders})`,
+        interviewIds
+      );
+      const completedSet = new Set((rows || []).map((r) => String(r.interviewId)));
+      completedInterviewIds = interviewIds.filter((id) => completedSet.has(id));
+    }
+
+    return res.json({
+      groupId: g.groupId,
+      restaurantName: g.restaurantName || undefined,
+      interviewIds,
+      completedInterviewIds,
+      progress: { completed: completedInterviewIds.length, total: interviewIds.length },
+      createdAt: g.createdAt,
+      updatedAt: g.updatedAt,
+    });
+  } catch (e) {
+    console.error("❌ get-group:", e);
+    res.status(500).json({ error: "Error leyendo grupo" });
+  }
+});
+
 // ✅ listado grupos (para admin normalmente) -> ADMIN ONLY
 app.get("/api/groups", requireAdmin, async (_req, res) => {
   try {
     const rows = await all(`SELECT * FROM groups ORDER BY updatedAt DESC LIMIT 500`);
+
+    // =========================================================
+    // ✅ NUEVO: cálculo de completados por grupo (para marcar tokens como "Completado")
+    // =========================================================
+    const summaryRows = await all(`SELECT interviewId FROM summaries`);
+    const completedGlobal = new Set((summaryRows || []).map((r) => String(r.interviewId)));
+
     res.json(
-      rows.map((g) => ({
-        groupId: g.groupId,
-        restaurantName: g.restaurantName || undefined,
-        interviewIds: JSON.parse(g.interviewIds),
-        createdAt: g.createdAt,
-        updatedAt: g.updatedAt,
-      }))
+      rows.map((g) => {
+        const interviewIds = JSON.parse(g.interviewIds || "[]").map(String);
+        const completedInterviewIds = interviewIds.filter((id) => completedGlobal.has(id));
+        return {
+          groupId: g.groupId,
+          restaurantName: g.restaurantName || undefined,
+          interviewIds,
+          // ✅ NUEVO:
+          completedInterviewIds,
+          progress: { completed: completedInterviewIds.length, total: interviewIds.length },
+          createdAt: g.createdAt,
+          updatedAt: g.updatedAt,
+        };
+      })
     );
   } catch (e) {
     console.error("❌ list-groups:", e);

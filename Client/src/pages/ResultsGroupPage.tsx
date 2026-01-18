@@ -47,6 +47,9 @@ type StoredGroup = {
   groupId: string;
   restaurantName?: string;
   interviewIds: string[];
+  // ✅ NUEVO: para marcar completados
+  completedInterviewIds?: string[];
+  progress?: { completed: number; total: number };
   createdAt?: string;
   updatedAt?: string;
 };
@@ -92,6 +95,12 @@ const ResultsGroupPage: React.FC = () => {
   const globalCacheKey = useMemo(() => (groupId ? `group-global-sum-${groupId}` : ""), [groupId]);
   const hiddenSummariesKey = useMemo(() => (groupId ? `hidden-summaries-${groupId}` : ""), [groupId]);
 
+  // ✅ NUEVO: Set de completados (para mostrar etiqueta "Completado")
+  const completedSet = useMemo(() => {
+    const ids = group?.completedInterviewIds || [];
+    return new Set(ids.map(String));
+  }, [group?.completedInterviewIds]);
+
   function getHiddenSet(): Set<string> {
     if (!hiddenSummariesKey) return new Set();
     const raw = localStorage.getItem(hiddenSummariesKey);
@@ -114,8 +123,7 @@ const ResultsGroupPage: React.FC = () => {
   }
 
   async function loadGroup(): Promise<StoredGroup> {
-    // IMPORTANTE: tu server NO tiene /api/group/:id, así que esto casi seguro 404 y cae a localStorage.
-    // Lo dejo pero no dependemos de ello.
+    // ✅ AHORA SÍ: el server YA tiene /api/group/:id y devuelve también completedInterviewIds/progress
     try {
       const res = await adminFetch(`${API_BASE}/api/group/${encodeURIComponent(groupId)}`);
       if (res.ok) {
@@ -125,6 +133,10 @@ const ResultsGroupPage: React.FC = () => {
           groupId: String(g.groupId),
           restaurantName: g.restaurantName ? String(g.restaurantName) : undefined,
           interviewIds: g.interviewIds.map(String).filter(Boolean),
+          completedInterviewIds: Array.isArray(g.completedInterviewIds) ? g.completedInterviewIds.map(String) : [],
+          progress: g.progress
+            ? { completed: Number(g.progress.completed || 0), total: Number(g.progress.total || 0) }
+            : undefined,
           createdAt: g.createdAt ? String(g.createdAt) : undefined,
           updatedAt: g.updatedAt ? String(g.updatedAt) : undefined,
         };
@@ -140,6 +152,10 @@ const ResultsGroupPage: React.FC = () => {
         groupId: String(parsed.groupId),
         restaurantName: parsed.restaurantName ? String(parsed.restaurantName) : undefined,
         interviewIds: parsed.interviewIds.map(String).filter(Boolean),
+        completedInterviewIds: Array.isArray(parsed.completedInterviewIds) ? parsed.completedInterviewIds.map(String) : [],
+        progress: parsed.progress
+          ? { completed: Number(parsed.progress.completed || 0), total: Number(parsed.progress.total || 0) }
+          : undefined,
         createdAt: parsed.createdAt ? String(parsed.createdAt) : undefined,
         updatedAt: parsed.updatedAt ? String(parsed.updatedAt) : undefined,
       };
@@ -380,6 +396,12 @@ const ResultsGroupPage: React.FC = () => {
           ) : null}
           Entrevistas: <strong>{group.interviewIds.length}</strong> · Resúmenes disponibles:{" "}
           <strong>{availableCount}</strong>
+          {group.progress ? (
+            <>
+              {" "}
+              · Completadas: <strong>{group.progress.completed}/{group.progress.total}</strong>
+            </>
+          ) : null}
         </p>
 
         <p style={{ marginTop: 12 }}>
@@ -453,6 +475,7 @@ const ResultsGroupPage: React.FC = () => {
             group.interviewIds.map((id, idx) => {
               const s = summaries[id];
               const hasSummary = Boolean(s?.summary?.trim());
+              const isCompleted = completedSet.has(String(id));
 
               return (
                 <div
@@ -479,18 +502,31 @@ const ResultsGroupPage: React.FC = () => {
                   >
                     <div style={{ fontWeight: 900 }}>
                       #{idx + 1} · {id}
+                      <span style={{ marginLeft: 10, fontWeight: 800 }}>
+                        {isCompleted ? "✅ Completado" : "⏳ Pendiente"}
+                      </span>
                       {!hasSummary ? (
                         <span style={{ marginLeft: 10, opacity: 0.75, fontWeight: 600 }}>(sin resumen)</span>
                       ) : null}
                     </div>
 
                     <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                      <a href={`/results/${encodeURIComponent(id)}`} target="_blank" rel="noreferrer" style={{ opacity: 0.9, textDecoration: "none" }}>
+                      <a
+                        href={`/results/${encodeURIComponent(id)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ opacity: 0.9, textDecoration: "none" }}
+                      >
                         Abrir individual ↗
                       </a>
 
                       {hasSummary && (
-                        <button className="PrimaryFlavButton" onClick={() => deleteSummary(id)} disabled={deletingId === id} title="Eliminar el resumen">
+                        <button
+                          className="PrimaryFlavButton"
+                          onClick={() => deleteSummary(id)}
+                          disabled={deletingId === id}
+                          title="Eliminar el resumen"
+                        >
                           {deletingId === id ? "⏳ Eliminando…" : "🗑 Eliminar resumen"}
                         </button>
                       )}
@@ -534,7 +570,7 @@ const ResultsGroupPage: React.FC = () => {
             textAlign: "left",
           }}
         >
-<div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "space-between", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "space-between", flexWrap: "wrap" }}>
             <h2 style={{ marginTop: 0, marginBottom: 10 }}>🧠 Informe global del grupo</h2>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
